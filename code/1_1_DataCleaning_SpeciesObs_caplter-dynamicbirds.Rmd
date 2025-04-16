@@ -1,0 +1,1387 @@
+---
+title: "CAP LTER Birds 2025 - Occupancy Data Prep"
+author: "Jeffrey Haight"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+gc()
+```
+
+```{r packages warning = FALSE}
+library(tidyverse)
+library(lubridate)
+library(RColorBrewer)
+library(sf)
+# library(terra)
+```
+
+
+```{r read in the observation data}
+list.files("C:/Research/CAPLTER/data/core_birds")  
+
+dt1 <-read.csv("C:/Research/CAPLTER/data/core_birds/46_bird_observations.csv",
+              header=F ,skip=1, sep=",", quot='"', col.names=c(
+                  "survey_id",     
+                  "site_code",     
+                  "survey_date",     
+                  "time_start",     
+                  "time_end",     
+                  "observer",     
+                  "code",     
+                  "common_name",     
+                  "distance",     
+                  "bird_count",     
+                  "observation_notes",     
+                  "seen",     
+                  "heard",     
+                  "direction",     
+                  "qccomment"    
+                  ), check.names=TRUE)
+               
+		    
+# Fix any interval or ratio columns mistakenly read in as nominal and nominal columns read as numeric or dates read as strings
+                
+if (class(dt1$survey_id)!="factor") dt1$survey_id<- as.factor(dt1$survey_id)
+if (class(dt1$site_code)!="factor") dt1$site_code<- as.factor(dt1$site_code)                                   
+# attempting to convert dt1$survey_date dateTime string to R date structure (date or POSIXct)                                
+tmpDateFormat<-"%Y-%m-%d"
+tmp1survey_date<-as.Date(dt1$survey_date,format=tmpDateFormat)
+# Keep the new dates only if they all converted correctly
+if(length(tmp1survey_date) == length(tmp1survey_date[!is.na(tmp1survey_date)])){dt1$survey_date <- tmp1survey_date } else {print("Date conversion failed for dt1$survey_date. Please inspect the data and do the date conversion yourself.")}                                                                    
+rm(tmpDateFormat,tmp1survey_date) 
+if (class(dt1$observer)!="factor") dt1$observer<- as.factor(dt1$observer)
+if (class(dt1$code)!="factor") dt1$code<- as.factor(dt1$code)
+if (class(dt1$common_name)!="factor") dt1$common_name<- as.factor(dt1$common_name)
+if (class(dt1$distance)!="factor") dt1$distance<- as.factor(dt1$distance)
+if (class(dt1$bird_count)=="factor") dt1$bird_count <-as.numeric(levels(dt1$bird_count))[as.integer(dt1$bird_count) ]               
+if (class(dt1$bird_count)=="character") dt1$bird_count <-as.numeric(dt1$bird_count)
+if (class(dt1$observation_notes)!="factor") dt1$observation_notes<- as.factor(dt1$observation_notes)
+if (class(dt1$seen)!="factor") dt1$seen<- as.factor(dt1$seen)
+if (class(dt1$heard)!="factor") dt1$heard<- as.factor(dt1$heard)
+if (class(dt1$direction)!="factor") dt1$direction<- as.factor(dt1$direction)
+if (class(dt1$qccomment)!="factor") dt1$qccomment<- as.factor(dt1$qccomment)
+                
+# Convert Missing Values to NA for non-dates
+dt1$distance <- as.factor(ifelse((trimws(as.character(dt1$distance))==trimws("NA")),NA,as.character(dt1$distance)))
+dt1$bird_count <- ifelse((trimws(as.character(dt1$bird_count))==trimws("NA")),NA,dt1$bird_count)               
+suppressWarnings(dt1$bird_count <- ifelse(!is.na(as.numeric("NA")) & (trimws(as.character(dt1$bird_count))==as.character(as.numeric("NA"))),NA,dt1$bird_count))
+dt1$observation_notes <- as.factor(ifelse((trimws(as.character(dt1$observation_notes))==trimws("NA")),NA,as.character(dt1$observation_notes)))
+dt1$direction <- as.factor(ifelse((trimws(as.character(dt1$direction))==trimws("NA")),NA,as.character(dt1$direction)))
+dt1$qccomment <- as.factor(ifelse((trimws(as.character(dt1$qccomment))==trimws("NA")),NA,as.character(dt1$qccomment)))
+
+
+# Here is the structure of the input data frame:
+
+obs <- dt1 ;rm(dt1)
+str(obs)          
+
+# make some basic adjustments
+  # first of all, people had to have at least seen *or* heard the bird to count it
+  obs %>% filter(seen == "FALSE" & heard == "FALSE")   # that's not quite right, but likely jusy data entry error
+  # obs <- obs %>% filter(seen == "TRUE" | heard == "TRUE")  
+  obs$code <- as.character(obs$code)
+  obs$common_name <- as.character(obs$common_name)
+  
+  # remove some of the holes in the data
+    # some of the data points are missing key data
+    obs[is.na(obs$distance)== TRUE,]# %>% nrow()
+    # most importantly, 239 observations don't have any count, so drop those
+    obs[is.na(obs$bird_count)== TRUE,] %>% nrow()
+    obs <- obs %>% drop_na(bird_count)     
+  
+  
+
+```
+
+```{r read in the survey data}
+dt2 <-read.csv("C:/Research/CAPLTER/data/core_birds/46_bird_surveys.csv",
+          header=F ,skip=1, sep=",", quot='"', col.names=c(
+                    "survey_id",     
+                    "site_code",     
+                    "location_type",     
+                    "survey_date",     
+                    "time_start",     
+                    "time_end",     
+                    "observer",     
+                    "wind_speed",     
+                    "wind_dir",     
+                    "air_temp",     
+                    "cloud_cover",     
+                    "survey_notes",     
+                    "human_activity_notes",     
+                    "wind",     
+                    "precipitation",     
+                    "disturbances",     
+                    "sight_obstruct",     
+                    "noise_level",     
+                    "site_condition",     
+                    "non_bird_species",     
+                    "additional_bird_observations"    
+                    ), check.names=TRUE)
+
+# Fix any interval or ratio columns mistakenly read in as nominal and nominal columns read as numeric or dates read as strings
+                
+if (class(dt2$survey_id)!="factor") dt2$survey_id<- as.factor(dt2$survey_id)
+if (class(dt2$site_code)!="factor") dt2$site_code<- as.factor(dt2$site_code)
+if (class(dt2$location_type)!="factor") dt2$location_type<- as.factor(dt2$location_type)                                   
+# attempting to convert dt2$survey_date dateTime string to R date structure (date or POSIXct)                                
+tmpDateFormat<-"%Y-%m-%d"
+tmp2survey_date<-as.Date(dt2$survey_date,format=tmpDateFormat)
+# Keep the new dates only if they all converted correctly
+if(length(tmp2survey_date) == length(tmp2survey_date[!is.na(tmp2survey_date)])){dt2$survey_date <- tmp2survey_date } else {print("Date conversion failed for dt2$survey_date. Please inspect the data and do the date conversion yourself.")}                                                                    
+rm(tmpDateFormat,tmp2survey_date) 
+if (class(dt2$observer)!="factor") dt2$observer<- as.factor(dt2$observer)
+if (class(dt2$wind_speed)=="factor") dt2$wind_speed <-as.numeric(levels(dt2$wind_speed))[as.integer(dt2$wind_speed) ]               
+if (class(dt2$wind_speed)=="character") dt2$wind_speed <-as.numeric(dt2$wind_speed)
+if (class(dt2$wind_dir)!="factor") dt2$wind_dir<- as.factor(dt2$wind_dir)
+if (class(dt2$air_temp)=="factor") dt2$air_temp <-as.numeric(levels(dt2$air_temp))[as.integer(dt2$air_temp) ]               
+if (class(dt2$air_temp)=="character") dt2$air_temp <-as.numeric(dt2$air_temp)
+if (class(dt2$cloud_cover)=="factor") dt2$cloud_cover <-as.numeric(levels(dt2$cloud_cover))[as.integer(dt2$cloud_cover) ]               
+if (class(dt2$cloud_cover)=="character") dt2$cloud_cover <-as.numeric(dt2$cloud_cover)
+# if (class(dt2$survey_notes)!="factor") dt2$survey_notes<- as.factor(dt2$survey_notes)
+# if (class(dt2$human_activity_notes)!="factor") dt2$human_activity_notes<- as.factor(dt2$human_activity_notes)
+if (class(dt2$wind)!="factor") dt2$wind<- as.factor(dt2$wind)
+if (class(dt2$precipitation)!="factor") dt2$precipitation<- as.factor(dt2$precipitation)
+if (class(dt2$disturbances)!="factor") dt2$disturbances<- as.factor(dt2$disturbances)
+if (class(dt2$sight_obstruct)=="factor") dt2$sight_obstruct <-as.numeric(levels(dt2$sight_obstruct))[as.integer(dt2$sight_obstruct) ]               
+if (class(dt2$sight_obstruct)=="character") dt2$sight_obstruct <-as.numeric(dt2$sight_obstruct)
+if (class(dt2$noise_level)!="factor") dt2$noise_level<- as.factor(dt2$noise_level)
+# if (class(dt2$site_condition)!="factor") dt2$site_condition<- as.factor(dt2$site_condition)
+# if (class(dt2$non_bird_species)!="factor") dt2$non_bird_species<- as.factor(dt2$non_bird_species)
+# if (class(dt2$additional_bird_observations)!="factor") dt2$additional_bird_observations<- as.factor(dt2$additional_bird_observations)
+                
+# Convert Missing Values to NA for non-dates
+                
+dt2$wind_speed <- ifelse((trimws(as.character(dt2$wind_speed))==trimws("NA")),NA,dt2$wind_speed)               
+suppressWarnings(dt2$wind_speed <- ifelse(!is.na(as.numeric("NA")) & (trimws(as.character(dt2$wind_speed))==as.character(as.numeric("NA"))),NA,dt2$wind_speed))
+dt2$wind_dir <- as.factor(ifelse((trimws(as.character(dt2$wind_dir))==trimws("NA")),NA,as.character(dt2$wind_dir)))
+dt2$air_temp <- ifelse((trimws(as.character(dt2$air_temp))==trimws("NA")),NA,dt2$air_temp)               
+suppressWarnings(dt2$air_temp <- ifelse(!is.na(as.numeric("NA")) & (trimws(as.character(dt2$air_temp))==as.character(as.numeric("NA"))),NA,dt2$air_temp))
+dt2$cloud_cover <- ifelse((trimws(as.character(dt2$cloud_cover))==trimws("NA")),NA,dt2$cloud_cover)               
+suppressWarnings(dt2$cloud_cover <- ifelse(!is.na(as.numeric("NA")) & (trimws(as.character(dt2$cloud_cover))==as.character(as.numeric("NA"))),NA,dt2$cloud_cover))
+dt2$survey_notes <- ifelse((trimws(as.character(dt2$survey_notes))==trimws("NA")),NA,as.character(dt2$survey_notes)) #%>% as.factor
+dt2$human_activity_notes <-ifelse((trimws(as.character(dt2$human_activity_notes))==trimws("NA")),NA,as.character(dt2$human_activity_notes)) #%>% as.factor
+dt2$wind <- as.factor(ifelse((trimws(as.character(dt2$wind))==trimws("NA")),NA,as.character(dt2$wind)))
+dt2$precipitation <- as.factor(ifelse((trimws(as.character(dt2$precipitation))==trimws("NA")),NA,as.character(dt2$precipitation)))
+dt2$disturbances <- as.factor(ifelse((trimws(as.character(dt2$disturbances))==trimws("NA")),NA,as.character(dt2$disturbances)))
+dt2$sight_obstruct <- ifelse((trimws(as.character(dt2$sight_obstruct))==trimws("NA")),NA,dt2$sight_obstruct)               
+suppressWarnings(dt2$sight_obstruct <- ifelse(!is.na(as.numeric("NA")) & (trimws(as.character(dt2$sight_obstruct))==as.character(as.numeric("NA"))),NA,dt2$sight_obstruct))
+dt2$noise_level <- as.factor(ifelse((trimws(as.character(dt2$noise_level))==trimws("NA")),NA,as.character(dt2$noise_level)))
+dt2$site_condition <- ifelse((trimws(as.character(dt2$site_condition))==trimws("NA")),NA,as.character(dt2$site_condition))#%>% as.factor
+dt2$non_bird_species <- ifelse((trimws(as.character(dt2$non_bird_species))==trimws("NA")),NA,as.character(dt2$non_bird_species))#%>% as.factor
+dt2$additional_bird_observations <- ifelse((trimws(as.character(dt2$additional_bird_observations))==trimws("NA")),NA,as.character(dt2$additional_bird_observations))#%>% as.factor
+
+# Here is the structure of the input data frame:
+surveys <- dt2 ; rm(dt2)
+str(surveys)
+```
+
+```{r read in the site location data for reference}
+
+pts.bird.data <- read.csv("C:/Research/CAPLTER/data/core_birds/46_bird_survey_locations.csv")
+
+
+pts.bird <- st_as_sf(pts.bird.data, coords = c("long", "lat"), crs = 32612)
+
+
+plot(pts.bird$geometry)
+```
+
+### Create Lists of Bird Species
+```{r create a list of observed species names} 
+# In the process, we will check that the names and codes in the 'obs' data are up-to-date
+  # Create a list of the observed species
+  bird.list <- obs %>% dplyr::select(common_name, code) %>% group_by(common_name) %>% filter(row_number()== 1)
+  bird.list %>% arrange(code)
+
+  # Let's add some species scientific names using a species list from the Institute for Bird Populations
+  bird.codes <- read.csv("C:/Research/data/wildlife/traits/IBPAOU/IBP-AOS-LIST23.csv")
+  bird.codes <- bird.codes %>% dplyr::select(SPEC, COMMONNAME, SCINAME, SPEC6)
+  # bird.codes
+  colnames(bird.codes) <- c("code", "common_name", "sci_name", "code6")
+  bird.codes %>% arrange(common_name)
+
+# merge the lists
+left_join(bird.list, bird.codes, by = c("code", "common_name")) %>% arrange(code) %>% filter(is.na(sci_name) == TRUE)
+# There are some species here that didn't merge, it is likely because they used a different alpha code or taxonomy otherwise changed (use the filter above to see)
+# Let's fix the CAP bird list codes to match the IBP
+
+# Certain species simply need their alpha code changed
+    obs$code[which(obs$code == "AMGO")] <- "AGOL" # American Goldfinch
+    obs$code[which(obs$code == "BTAH")] <- "BTHU"  # Broad-tailed Hummingbird
+    obs$code[which(obs$code == "HASH")] <- "HAHA"
+
+# For others, it may be necessary to update their common names too
+    obs$code[which(obs$code == "COCA")] <- "ISCA"  # Island Canary
+    obs$common_name[which(obs$code == "ISCA")] <- "Island Canary"  # Island Canary
+    obs$code[which(obs$code == "COGD")] <- "CGDO"   # Ground-Dove vs. Ground Dove
+    obs$common_name[which(obs$code == "CGDO")] <- "Common Ground Dove"   # Ground-Dove vs. Ground Dove
+# COFL and PSFL are no longer recognized as distinct species. 
+# They're both Western flycatcher, Empidonax dificilis
+    obs$code[which(obs$code == "COFL")] <- "WEFL"  
+    obs$code[which(obs$code == "PSFL")] <- "WEFL"    
+    obs$common_name[which(obs$code == "WEFL")] <- "Western Flycatcher"
+    
+# For these species, the common name was not an exact match
+    obs$common_name[which(obs$code == "BBWD")] <- "Black-bellied Whistling-Duck"     # has a hyphen in the IBP list
+    obs$common_name[which(obs$code == "RIRA")] <- "Ridgway's Rail"      # 'Ridgeway' not 'Ridgeway'
+    
+# Domestic species will have to have their scientific names added manually
+# These species are not in most of the trait datasets
+    obs$common_name[which(obs$code == "DODU")] # Domestic duck = Anas platyrhynchos domesticus
+    obs$common_name[which(obs$code == "DOGO")] # Domestic goose = Anser anser domesticus
+    obs$common_name[which(obs$code == "CHGO")] # Chinese Goose = Anser cygnoides domesticus (not the same as DOGO)
+    obs$common_name[which(obs$code == "COTE")] # Cockatiel = Nymphicus hollandicus
+    
+# 'Sage Sparrow' most likely the 'Sagebrush Sparrow' (SABS), though the congeneric Bell's Sparrow is known to occur in the area. Neither species is duplicated elsewhere in the datasets
+    obs$code[which(obs$code == "SAGS")] <- "SABS"
+    obs$common_name[which(obs$code == "SABS")] <- "Sagebrush Sparrow"
+
+  
+# make a few other adjustments to the species list to facilitate better merging with trait data later on
+  # Use 'Setophaga coronata YRWA' for all Yellow-rumped Warbler subspecies (AUWA and MYWA)
+    obs$common_name[which(obs$code %in% c("AUWA", "MYWA", "YRWA", "UYRW"))] <- "Yellow-rumped Warbler"
+    obs$code[which(obs$code %in% c("AUWA", "MYWA", "YRWA",  "UYRW"))]  <- "YRWA"
+    # Use 'Junco hyemalis DEJU' for all Dark-eyed Junco subspecies (GHJU, SCJU, PSJU, ORJU)
+    obs$common_name[which(obs$code %in% c("GHJU", "SCJU", "PSJU", "ORJU"))] <- "Dark-eyed Junco"
+    obs$code[which(obs$code %in% c("GHJU", "SCJU", "PSJU", "ORJU", "DEJU"))]  <- "DEJU"
+    # Use 'Anas crecca GWTE' for the American Green-winged Teal subspecies (AGWT)
+    obs$common_name[which(obs$code == "AGWT")] <- "Green-winged Teal"
+    obs$code[which(obs$code %in% c("AGWT", "GWTE"))]  <- "GWTE"
+    
+    # the Western scrub jay ssp. were split, so all scrub jays in the area should be Woodhouse's
+    # but, the trait datasets still have them as Aphelocoma californica
+    # where encountered, we can update to Woodhouse's
+    # obs %>% filter(grepl('Jay', common_name))  # there were only a handful of detections
+    
+    # All the winter wrens were lumped together, but Pacific Wrens are the ones in Arizona, so we'll update the names to that
+    # Pacific/Winter Wren	PWWR	Troglodytes pacificus/hiemalis	TROPAH	
+    # obs %>% filter(grepl('Pacific', common_name))  # there was only one detection
+    obs$common_name[which(obs$code == "PWWR")] <- "Pacific Wren"
+    obs$code[which(obs$code %in% c("PWWR", "PAWR"))]  <- "PAWR"
+    
+    
+    # there's only one meadowlark here and that's the Western Meadowlark
+    obs$common_name[which(obs$code == "UNME")] <- "Western Meadowlark"
+    obs$code[which(obs$code %in% c("UNME"))]  <- "WEME"
+    
+    
+bird.list <- obs %>% dplyr::select(common_name, code) %>% group_by(common_name) %>% filter(row_number()== 1)
+
+(
+  bird.list.joined <- left_join(bird.list, bird.codes, by = c("code", "common_name")) 
+  %>% arrange(code) 
+)
+
+# Add scientific names for the domestic species (even though they won't be in many of the trait datasets)
+  bird.list.joined %>% filter(is.na(sci_name) == TRUE)
+  bird.list.joined$sci_name[which(bird.list.joined$code == "CHGO")] <- "Anser cygnoides domesticus"
+  bird.list.joined$sci_name[which(bird.list.joined$code == "COTE")] <- "Nymphicus hollandicus"
+  bird.list.joined$sci_name[which(bird.list.joined$code == "DODU")] <- "Anas platyrhynchos domesticus"
+  bird.list.joined$sci_name[which(bird.list.joined$code == "DOGO")] <- "Anser anser domesticus"
+  
+nrow(bird.list.joined)  # Now reduced to 299 common names including the unidentified
+```
+
+### 'Unidentified' Species
+There are also many observations where species could not be positively identified. While 'unidentified' species cannot be considered 'species' per se when calculating species richness/diversity, they could be included in measures of total community abundance and the abundance of certain species groups, so don't cut them out yet. Certain unidentified species can be assumed to be certain genera/species though.
+e.g. the only genus of cormorants in central Arizona is Nannopterum
+
+```{r}
+# obs %>% filter(grepl("Unidentified", common_name)) %>% pull(common_name) %>% unique()
+# bird.list.joined %>% filter(grepl("Unidentified", common_name)) %>% arrange(common_name)
+
+# the ones that already have (gen, sp) can be left that way, 
+# but let's edit/fill in the rest that at least have a genus name
+bird.list.joined$sci_name[which(bird.list.joined$code == "UAHA")] <- "Accipiter sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UNBU")] <- "Buteo sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UCSA")] <- "Calidris sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UCNI")] <- "Chordeiles sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UEFL")] <- "Empidonax sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UDCO")] <- "Nannopterum sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UNCO")] <- "Molothrus sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UNFL")] <- "Colaptes sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UNGN")] <- "Polioptila sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UNIB")] <- "Plegadis sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UNKI")] <- "Tyrannus sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UMFL")] <- "Myiarchus sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UNOR")] <- "Icterus sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UNTA")] <- "Piranga sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UTHR")] <- "Toxostoma sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UNVI")] <- "Vireo sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UNYE")] <- "Tringa sp."
+bird.list.joined$sci_name[which(bird.list.joined$code == "UDOV")] <- "Columbidae (gen, sp)"
+bird.list.joined$sci_name[which(bird.list.joined$code == "UNFA")] <- "Falconiformes (gen, sp)"
+bird.list.joined$sci_name[which(bird.list.joined$code == "UFLI")] <- "Colaptes sp."
+bird.list.joined$sci_name[which(bird.list.joined$code %in% c("UNEG", "UNHE", "UEHE"))] <- "Ardeidae (gen, sp)"
+bird.list.joined$sci_name[which(bird.list.joined$code == "UNGU")] <- "Laridae (gen, sp)"
+bird.list.joined$sci_name[which(bird.list.joined$code %in% c("USAN", "UNSH"))] <- "Charadriiformes (gen, sp)"
+bird.list.joined$sci_name[which(bird.list.joined$code %in% c("UNPK", "UNPA"))] <- "Psittaciformes (gen, sp)"
+
+bird.list.joined %>% filter(grepl("Unidentified", common_name)) %>% arrange(common_name)
+```
+
+```{r create list of unknown species}
+
+obs %>% pull(common_name) %>% unique() %>% length()  # the total number of species observed
+
+# list of unidentified 'species'
+  spp.unknown <- obs %>% filter(grepl("Unidentified", common_name)) %>% pull(common_name) %>% unique() %>% sort()
+  length(spp.unknown); spp.unknown
+  obs %>% filter(common_name %in% spp.unknown) %>% nrow() # view the observations of the 'unidentified' species
+  
+# list of identified species
+  spp.known <- obs %>% filter(!common_name %in% spp.unknown) %>% pull(common_name) %>% unique()
+  length(spp.known)#; spp.known
+
+  
+# # drop the factor levels
+# obs$code <- droplevels(obs$code)
+# obs$common_name <- droplevels(obs$common_name)
+
+```
+
+
+```{r export species list}
+write.csv(bird.list.joined, "~/GitHub/caplter-dynamicbirds/data/listofspecies_corebirds.csv", row.names = FALSE)
+```
+
+### Filter by Observation Type
+
+
+##### A) Exclude long-distance observations
+To reduce uncertainty due to observer bias and to ensure birds were actually using the site, we will exclude long-distance (>40 m) IDs and fly-throughs, consistent with methods from previous related studies (e.g. Warren et al. 2019). However, following the approaches of other CAP bird studies (D. Allen, F. Albuquerque, et al.), we can include far-way and fly-over species from certain groups of species: "Birds detected beyond the 40 m distance, or those that flew over the point, were not counted except for wide-ranging and wide-foraging species (i.e., birds of prey, waterfowl, and shorebirds)" (Allen et al. 2019); "Observers did not document species outside or above the 40-m radius except for soaring species." (Albuquerque et al. 2021).  
+
+So, we will exclude observations that are 40+ m and fly-throughs (FT), with the exceptions of certain bird guilds, namely birds of prey, waterfowl, and 'large' waterbirds that would be expected to range over open water (guilds come from Andrade et al. 2018 and allaboutbirds.org).
+We need to define what counts as a "large" waterbird, which should include cormorants, pelicans, and great blue herons, but not any of the shorebirds. By wing length (source: AVONET), the Long-billed Curlew is the largest shorebird, at 266.8 mm (wingspan on allaboutbirds.org: 24.4-35.0 in, 62-89 cm). The Neotropic Cormorant has a wing length of 275.4 mm (40.2 in, 102 cm). The American Bittern is right in between, at 270.8 (wingspan 36.2 in, 92 cm), but it was also never observed from afar (only observation was < 40 m anway). 
+
+So, one approach would be to consider a waterbird large if it has a minimum 270 mm wing length *or* 90 cm wingspan (some species are only one or the other, we'd need to check). With this cut-off, the only non-waterbird, non-raptor birds that could be considered "large" are the Common Raven and American Crow.
+
+```{r list far away species to keep}
+
+birdsofprey <- c(
+    "American Kestrel",   # small
+    "Bald Eagle",
+    "Black Vulture",
+    "Burrowing Owl",      # small
+    "Common Black Hawk",
+    "Cooper's Hawk",      # small by wing length, but not by wingspan
+    "Ferruginous Hawk",
+    "Golden Eagle",
+    "Great Horned Owl",
+    "Harris's Hawk",
+    "Long-eared Owl",
+    "Merlin",             # small
+    "Northern Harrier",
+    "Osprey",
+    "Peregrine Falcon",
+    "Prairie Falcon",
+    "Red-shouldered Hawk",
+    "Red-tailed Hawk",
+    "Rough-legged Hawk",
+    "Sharp-shinned Hawk",   # small
+    "Swainson's Hawk",
+    "Turkey Vulture",
+    "Zone-tailed Hawk",
+    "Unidentified Accipiter Hawk",
+    "Unidentified Buteo",
+    "Unidentified Hawk",
+    "Unidentified Owl",
+    "Unidentified Falcon",
+    "Unidentified Raptor"#,
+
+  )
+
+waterfowl <- c(
+    "American Wigeon",
+    "Black-bellied Whistling-Duck",
+    "Blue-winged Teal",
+    "Bufflehead",
+    "Canada Goose",
+    "Canvasback",
+    "Chinese Goose",
+    "Cinnamon Teal",
+    "Common Goldeneye",
+    "Common Merganser",
+    "Domestic Duck",
+    "Domestic Goose",
+    "Gadwall",
+    "Green-winged Teal",
+    "Hooded Merganser",
+    "Lesser Scaup",
+    "Mallard",
+    "Northern Pintail",
+    "Northern Shoveler",
+    "Redhead",
+    "Ring-necked Duck",
+    "Ruddy Duck",
+    "Snow Goose",
+    "Unidentified Duck",
+    "Unidentified Goose",
+    "Unidentified Waterfowl"#,
+)
+
+waterbirds.large <- c(
+  # fish-eating waterbirds
+      # "Bald Eagle",     # already listed under birds of prey above
+      # "Osprey",         # already listed under birds of prey above
+      "American White Pelican",
+      # "Belted Kingfisher",
+      "Brown Pelican",
+      "Common Loon",
+      "Double-crested Cormorant",
+      # "Eared Grebe",  
+      "Franklin's Gull",
+      "Neotropic Cormorant",
+      "Ring-billed Gull",
+      # "Western Grebe",  
+      "Unidentified Cormorant",   # large
+  # Marshbirds
+      "American Bittern",   # large
+      # "American Coot",
+      # "Common Gallinule",
+      # "Pied-billed Grebe",
+      # "Ridgway's Rail",
+      # "Sora",
+      # "Virginia Rail"#,
+  # Shorebirds (all considered too small to ID from distance)
+      # "American Avocet",
+      # "Black-necked Stilt",
+      # "Killdeer",
+      # "Least Sandpiper",
+      # "Lesser Yellowlegs",
+      # "Long-billed Curlew",
+      # "Long-billed Dowitcher",
+      # "Spotted Sandpiper",
+      # "Western Sandpiper",
+      # "Willet",
+      # "Wilson's Phalarope",
+      # "Wilson's Snipe",
+      # "Unidentified Calidris Sandpiper",
+      # "Unidentified Dowitcher",
+      # "Unidentified Sandpiper",
+      # "Unidentified Shorebird",
+      # "Unidentified Stilt",
+      # "Unidentified Yellowlegs"
+  # Waders
+      "Black-crowned Night-Heron",
+      "Cattle Egret",       # wing length = 244.4, but wingspan 88-96 cm (borderline)
+      "Glossy Ibis",        # no wingspan on allaboutbirds.org
+      "Great Blue Heron",
+      "Great Egret",
+      # "Green Heron",
+      # "Least Bittern",
+      "Little Blue Heron",  # wing length = 257.8, but wingspan 100-105 cm
+      "Snowy Egret",        # wing length = 252.8, but wingspan 100 cm
+      "Unidentified Egret",
+      "Unidentified Egret/Heron",
+      "Unidentified Heron",
+      "Unidentified Ibis",
+      # "Unidentified Wader",
+      "White-faced Ibis",    # winglength = 246.5 cm, but wingspan 90-93 cm
+      "Wood Stork"#,
+)
+
+birds.large <- c(
+    # other large birds to potentially keep
+      "Common Raven",
+      "American Crow"
+)
+
+to.keep.sppfar <- c(birdsofprey, waterfowl, waterbirds.large, birds.large)
+```
+A) Filter far-away species
+```{r summarize the far away species}
+# how many far away observations were there?
+  obs %>% filter(distance %in% c("40+", "FT")) %>% nrow()#filter(seen == "FALSE" & heard == "FALSE") %>% 
+  # That's a lot of 40+ and FT (~140K out of ~209K observations)
+  obs %>% filter(distance %in% c("40+", "FT")) %>% filter(common_name %in% c(to.keep.sppfar)) %>% nrow()
+  # However, only ~7K were from the species that we will potentially keep.
+  # This includes the sole observation of an American Bittern (which was right on the boundary of a 'large' waterbird)
+
+# how many observations of each species were near (<40 m) vs. far (40+ or FT)
+  full_join(
+    (obs %>% filter(distance %in% c("40+", "FT"))%>% group_by(common_name) %>% 
+    summarize(n_obs_far = length(site_code))),
+    (obs %>% filter(!distance %in% c("40+", "FT"))%>% group_by(common_name) %>%
+    summarize(n_obs_near = length(site_code)) )
+  ) %>% mutate(obs_ratio = n_obs_far/n_obs_near) %>% arrange(desc(obs_ratio))
+  # 62 species were only ever observed from afar, ~2/3 of which were raptors and waterbirds
+  # 23 species were only ever observed in the <40 m range
+
+# same thing, but just the far-away species that we want to keep
+  full_join(
+      (obs %>% filter(distance %in% c("40+", "FT"))%>% group_by(common_name) %>% filter(common_name %in% c(to.keep.sppfar)) %>% 
+      summarize(n_obs_far = length(site_code))),
+      (obs %>% filter(!distance %in% c("40+", "FT"))%>% group_by(common_name) %>% filter(common_name %in% c(to.keep.sppfar)) %>% 
+      summarize(n_obs_near = length(site_code)) )
+    ) %>% mutate(obs_ratio = n_obs_far/n_obs_near) %>% arrange(desc(obs_ratio))
+  # 30 species (8 of which are 'unidentified') were only ever observed as 40+ or FT
+
+
+
+```
+
+
+Of all the far-away species we would like to include, they are likely going to be excluded later on due to their rarity. For instance, here are the several species only observed once:
+  American Bittern
+  Chinese Goose
+  Common Loon
+  Franklin's Gull
+  Glossy Ibis
+  Long-eared Owl
+  Rough-legged Hawk
+  Wood Stork  
+These were the ones only observed twice (not necessarily in separate seasons):  
+  Common Black Hawk
+  Hooded Merganser
+  Little Blue Heron
+  Zone-tailed Hawk
+  Canvasback
+  Common Goldeneye
+  Golden Eagle
+  Red-shouldered Hawk
+  Ring-billed Gull
+And these were the ones only observed three times (again, not necessarily in separate seasons):  
+  Bufflehead
+  Brown Pelican
+
+
+```{r filter data by distance and update bird list}
+summary(obs$distance)
+
+# 209548 observations total
+# 69344 observations that were nearby
+# 140204 fly-throughs and >40 m observations
+# 5981 fly-throughs and >40 m observations by wide-ranging and wide-foraging species
+
+  
+# remove those far away observations that weren't certain species
+obs <- obs %>% filter(!distance %in% c('40+', 'FT') | common_name %in% c(to.keep.sppfar)) %>% arrange(desc(distance))
+
+obs %>% filter(!distance %in% c('40+', 'FT')) %>% nrow()
+  
+# obs$distance <- droplevels(obs$distance)
+
+bird.list.joined %>% filter(code %in% unique(obs$code))
+
+
+write.csv((bird.list.joined %>% filter(code %in% unique(obs$code))), "~/GitHub/caplter-dynamicbirds/data/listofspecies_corebirds_nearbyonly.csv", row.names = FALSE)
+```
+
+
+B) Truncate counts:    
+It is very unlikely that an observer could only HEAR a group of birds and get a reliable count over about 5 individuals. So, for any observations where 'seen' == FALSE, truncate the bird counts to 5 (following the methods of J. Clark). To complicate this a bit, a number of observations were listed as 'seen' == FALSE and 'heard' == FALSE. These can generally assumed to be observer error, where 'seen' or 'heard' was not entered on the data sheet. Let's check to make sure they don't represent the a substantial portion of any species' observations, then exclude those metadata-deficient observations
+```{r}
+# obs[obs$bird_count > 50 & is.na(obs$bird_count) == FALSE,] %>% arrange(desc(bird_count))
+obs %>% filter(seen == "FALSE" & heard == "FALSE") %>% arrange(distance) #%>% pull(common_name) %>% unique()
+# ~370 rows still lack information about whether they were seen or heard, 
+# Only 267 of these were < 40 m; many were 40+ m or FT, but those have been removed
+
+# For those observations that were lacking seen/heard data, how many of the overall observation for each species does this represent ? 'n_known' = number of observations either seen or heard; 'n_unknown' = number of observations without seen or heard data
+spp.missing.obs <- obs %>% filter(seen == "FALSE" & heard == "FALSE") %>% pull(common_name) %>% unique()
+full_join(
+  (obs %>% filter(seen == "TRUE" | heard == "TRUE") %>% 
+  group_by(common_name) %>% 
+  filter(common_name %in% c(spp.missing.obs)) %>%
+  summarize(n_known = length(site_code))),
+  (obs %>% filter(seen == "FALSE" & heard == "FALSE") %>% 
+  group_by(common_name) %>% 
+  filter(common_name %in% c(spp.missing.obs)) %>%
+  summarize(n_unknown = length(site_code)))
+)
+# overall, that is relatively few of the observations, and we wouldn't lose any species by excluding these data-deficient observations
+
+# How many unseen observations do we have with > 5 individuals recorded?
+  obs[obs$seen == FALSE & obs$bird_count > 5 & is.na(obs$bird_count) == FALSE,] %>% arrange(heard)
+  # ~300 of these had more than 5 individuals recorded (22 were not in the not heard category as well)
+
+
+```
+
+```{r}
+
+# remove the 'not seen, not heard' observations
+obs <- obs %>% filter(seen == "TRUE" | heard == "TRUE")
+
+# truncate the remaining heard-only counts
+  obs[obs$seen == FALSE & obs$bird_count > 5 & is.na(obs$bird_count) == FALSE,]$bird_count <- 5
+  
+  
+# additionally, there are a few dozen surveys with really high visual counts, but this does happen, so we will keep those
+  obs[obs$bird_count > 50 & is.na(obs$bird_count) == FALSE,] %>% arrange(desc(bird_count))
+```
+
+
+
+
+
+
+
+# Combine Survey Info with Observation Data
+### Split by sampling seasons
+The sampling seasons for the birds shifted slightly over the years. 
+Earlier on:
+Winter    =    January 1st through end of February +/- a couple days (March 2nd in 2008, March 3rd in 2013)
+Spring    =    March 1st to end of May 
+Summer    =    July 1st to mid-August, but June 26th at the earliest start
+Fall      =    October 1st to end of November
+
+Later on, winter sampling starting to include dates that were as early as December 6th and summer sampling started earlier in some cases. So in general, each sampling season can be said to start on Dec/Mar/Jun/Sep 1st, but there are several other oddities that are worth noting and that will require fixing:
+- The last summer season was in 2005, last fall was in 2004. There are stray sampling dates outside of this range
+- Might want to drop surveys that were not part of the regular sampling e.g. surveys 1221 and 1220 (post burn recounts of EE-15A), 4751/4752/4753 (summer sampling in 2011?)
+- 2008 and 2013 winter sampling seasons extended a few days into March
+- These survey IDs should be winter surveys: 10250, 3974, 3973, 3976, 3975, 5825, 5795 , 5824, 5798, 5826, 5797, 5796, 5823, 5812, 5821, 5822, 5808, 5809, 5811, 5810.  Survey 10250 (AE-23 on 2/26/22) was conducted on a late date, but it is the 3rd survey in the winter season, despite being closer to the spring surveys at other sites. It seems the other surveys in 2008 and 2013 were conducted late because the whole sampling schedule was running behind, for reasons unknown
+
+
+
+
+```{r add sampling season}
+# 'yday' from the lubridate package is very handy for getting "day of the year"
+# for these purposes, let's include 
+yday(as.Date('2002-03-01')) # beginning of spring season  = 60
+yday(as.Date('2002-06-01')) # beginning of summer (hot-wet) season  = 152, 153 during leap years
+yday(as.Date('2002-09-01')) # beginning of fall season = 244, 255 during leap years
+yday(as.Date('2002-12-01')) # fall-winter boundary = 349, 350 during leap years
+
+surveys$yday <- yday(surveys$survey_date)
+surveys$survey_year <- year(surveys$survey_date)
+
+# add a new season column and classify by day of year
+  surveys$season <- NA
+  surveys$season[(surveys$yday >= 335)] <- "1_winter"
+  surveys$season[(surveys$yday < 60)] <- "1_winter"
+  surveys$season[(surveys$yday >= 60 & surveys$yday < 152)] <- "2_spring"
+  surveys$season[(surveys$yday >= 152 & surveys$yday < 244)] <- "3_summer"
+  surveys$season[(surveys$yday >= 244 & surveys$yday < 335)] <- "4_fall"
+  
+  # redo the leap years to fix the season start and end dates to match
+  surveys$season[surveys$yday >= 336 & surveys$survey_year %in% c(2000, 2004, 2008, 2012, 2016, 2020)] <- "1_winter"
+  surveys$season[(surveys$yday < 61) & surveys$survey_year %in% c(2000, 2004, 2008, 2012, 2016, 2020)] <- "1_winter"
+  surveys$season[(surveys$yday >= 61 & surveys$yday < 153 & surveys$survey_year %in% c(2000, 2004, 2008, 2012, 2016, 2020))] <- "2_spring"
+  surveys$season[(surveys$yday >= 153 & surveys$yday < 245 & surveys$survey_year %in% c(2000, 2004, 2008, 2012, 2016, 2020))] <- "3_summer"
+  surveys$season[(surveys$yday >= 245 & surveys$yday < 336 & surveys$survey_year %in% c(2000, 2004, 2008, 2012, 2016, 2020))] <- "4_fall"
+
+  # modify the few exceptions
+  surveys$season[as.character(surveys$survey_id) %in% c(
+    10250, 3974, 3973, 3976, 3975, 5825, 5795 , 5824, 5798, 5826, 
+    5797, 5796, 5823, 5812, 5821, 5822, 5808, 5809, 5811, 5810)] <- "1_winter"
+
+  # Important: 'survey_year' for December surveys should considered part of the winter season for the next year
+  # e.g. if a survey was on December 15th 2001, that was part of the Winter 2002 season
+  # subset these entries and add 1 to the survey year
+  surveys$survey_year[which(surveys$yday >= 335 & surveys$season == "1_winter")] <- surveys$survey_year[which(surveys$yday >= 335 & surveys$season == "1_winter")] + 1
+  
+surveys$season <- as.factor(surveys$season)
+
+
+
+surveys %>% arrange(yday)
+```
+One quick correction: the original downstream transect at Ave67 was moved upstream of the original upstream transect between the 2016 Winter and Spring surveys. As a consequence, Ave67_mid_B1 became Ave67_dwn_B1 after 2016, but it is exact same site, so we can rename all the Ave67 observations
+```{r align Ave67 site codes}
+# Here we can see that there are no 'Ave67_mid' after January 2016 in this dataset,
+# and then the 'Ave67_down' starts in April 2016
+obs %>% filter(site_code %in% c("Ave67_dwn_B1", "Ave67_mid_B1")) %>% 
+  group_by(survey_date) %>% slice(1) %>% arrange(survey_date)
+  
+# Rename the site codes, in both the bird data and survey metadata
+obs$site_code[which(obs$site_code == "Ave67_mid_B1")] <- "Ave67_dwn_B1"
+surveys$site_code[which(surveys$site_code == "Ave67_mid_B1")] <- "Ave67_dwn_B1"
+```
+
+```{r examine cases of multiple survey IDs}
+# Out of the 8,760 site-dates, only 14 included multiple survey IDs, such as U13 on 6/6/2000
+  obs %>% group_by(survey_date, site_code, survey_id) %>% filter(row_number() ==1) %>% ungroup() %>% 
+  count(survey_date, site_code) %>% filter(n >1)
+
+  msurvey.dates <- obs %>% group_by(survey_date, site_code, survey_id) %>% filter(row_number() ==1) %>% ungroup() %>% 
+    count(survey_date, site_code) %>% filter(n >1) %>% pull(survey_date)
+  
+  msurvey.sites <- obs %>% group_by(survey_date, site_code, survey_id) %>% filter(row_number() ==1) %>% ungroup() %>% 
+    count(survey_date, site_code) %>% filter(n >1) %>% pull(site_code)
+  
+  # these are all the observations from those 14 surveys. 
+  # None of these observation notes give much indication as to why there are multiple surveys on the same day
+  obs %>% 
+    filter(survey_date %in% msurvey.dates, site_code %in% msurvey.sites) %>% 
+    arrange(survey_date, time_start, survey_id) 
+    #arrange(desc(observation_notes))
+
+# 6 of those 14 occasions were the same person on multiple survey IDs
+  obs %>% group_by(survey_date, site_code, survey_id, observer) %>% filter(row_number() ==1) %>% ungroup() %>% 
+    count(survey_date, site_code, observer) %>% filter(n > 1)
+  
+  # For most of the cases in which there are multiple survey IDs per day/site, there are different start times, 
+  # indicating multiple 15-minute point counts were conducted (why is still not entirely clear)
+  # In which case, do we average across the counts for each species, standardizing per 15 minute survey?
+  # Or do we choose the max count of each species across the multiple surveys
+  
+  # However, there were previously 4 cases in which the same 15-min point count appears to have been given multiple survey IDs
+  # e.g. EN-7B on 2004-11-04 has two different survey IDs (2480 and 2509) for seemingly the same 15-min pt count by the same observer
+    # obs %>% group_by(survey_date, site_code, survey_id, time_start, observer) %>% 
+    #   filter(row_number() ==1) %>% ungroup()  %>% 
+    #   count(site_code, survey_date, time_start, observer) %>% filter(n > 1) %>% 
+    #   arrange(survey_date, site_code, time_start)
+  
+    # same observer with multiple survey IDS
+    #   T-19	2000-10-17	09:10:00	BeRa	2
+    #   V-20	2003-10-06	07:55:00	SuWi	2
+    #   AC-16	2004-10-16	08:55:00	JiJo	2
+    #   EN-7B	2004-11-04	09:05:00	JiJo	2
+  
+  # and one survey visit with multiple observers with the same start time (they counted the same birds)
+    # obs %>% group_by(survey_date, site_code, survey_id, time_start, observer) %>% filter(row_number() ==1) %>% ungroup()  %>% 
+    # count(site_code, survey_date, time_start) %>% filter(n > 1) %>% arrange(survey_date, site_code, time_start)
+  	
+    #   T-19	2004-10-23	10:40:00	2
+
+# check individual surveys  
+    # same observer at two different times, indicating separate point count stations
+    # obs %>% filter(survey_date == "2000-06-06", site_code ==	"U-13") %>% arrange(time_start, code)  # remove 29 and 30 pilot surveys
+    # obs %>% filter(survey_date == "2003-10-16", site_code ==	"U-12") %>% arrange(code, time_start)  # one of the U-12 site IDs is incorrect
+    # obs %>% filter(survey_date == "2005-07-23", site_code ==	"U-12") %>% arrange(time_start, code)  # errors
+    # obs %>% filter(survey_date == "2005-07-15", site_code ==	"PN-2A") %>% arrange(time_start, code) # errors
+    # obs %>% filter(survey_date == "2016-02-03", site_code ==	"AD-10") %>% arrange(time_start, code) # 
+    # obs %>% filter(survey_date == "2020-01-04", site_code ==	"PWRC") %>% arrange(time_start, code) # one of these is PWRA but cannot discern the correct fix
+    
+    # Two survey IDs for two separate point counts (diff times and observers)
+      # obs %>% filter(survey_date == "2000-11-24", site_code ==	"M-16")     # irresolvable error
+      # obs %>% filter(survey_date == "2000-11-24", site_code ==	"N-12")     # irresolvable error
+      # obs %>% filter(survey_date == "2001-01-11", site_code ==	"EE-15A")   # irresolvable error
+      # obs %>% filter(survey_date == "2004-02-01", site_code ==	"X-18") %>% arrange(time_start, code)   # irresolvable error
+      # obs %>% filter(survey_date == "2004-02-01", site_code ==	"Y-19") %>% arrange(time_start, code)   # irresolvable error
+      # obs %>% filter(survey_date == "2004-02-06", site_code ==	"V-13") %>% arrange(time_start, code)   # irresolvable error
+      # obs %>% filter(survey_date == "2004-02-06", site_code ==	"V-14") %>% arrange(time_start, code)   # irresolvable error
+     
+    # DUPLICATES: 
+    # multiple survey IDs for the same start times and identical bird observations (same or different observers)
+    # In these cases, we can simply remove one of the survey IDs
+      # obs %>% filter(survey_date == "2000-10-17", site_code ==	"T-19")  # remove survey ID 170 or 172. 146 is a different start time
+      # obs %>% filter(survey_date == "2003-10-06", site_code ==	"V-20")   # remove ID 1996 or 1937 
+      # obs %>% filter(survey_date == "2004-10-16", site_code ==	"AC-16") %>% arrange(time_start, code) # remove ID 2510 or 2507 
+      # obs %>% filter(survey_date == "2004-10-23", site_code ==	"T-19") %>% arrange(time_start, code)  # remove ID 5938
+      # obs %>% filter(survey_date == "2004-11-04", site_code ==	"EN-7B") %>% arrange(time_start, code) # remove ID 2509
+ 
+  	  
+```
+The order in which to summarize these:
+1) Same observer has two IDs at the same time: group by survey time, date, site, species, and observer, then get the _sum_ (these are the same pt count by the same observer, but different IDs)
+2) Different observers group by survey time, date, site, and species (not observer) then get the _max_ (if there are two people at the same point count at the same
+time, their seem to be cou
+3) different observers for 2 IDs at different time: group by survey site
+
+2000-10-17  T-19          2
+
+2000-06-06  U-13          2
+2003-10-16  U-12          2
+2005-07-15  PN-2A         2
+2005-07-23  U-12          2
+2016-02-03  AD-10         2
+2020-01-04  PWRC          2
+
+2000-11-24  M-16          2
+2000-11-24  N-12          2
+2001-01-11  EE-15A        2
+2004-02-01  X-18          2
+2004-02-01  Y-19          2
+2004-02-06  V-13          2
+2004-02-06  V-14          2
+
+
+
+There are 18 cases of same site and the same day, multiple survey IDs:
+
+
+Date        Site      #ID     Notes
+2000-06-06	U-13	    2		    same observer, two start times, two survey IDS
+2003-10-16	U-12	    2		    same observer, two start times, two survey IDS
+2005-07-23	U-12	    2		    same observer, two start times, two survey IDS
+2005-07-15	PN-2A	    2		    same observer, two start times, two survey IDS
+2016-02-03  AD-10     2		    same observer, two start times, two survey IDS
+2020-01-04	PWRC	    2		    same observer, two start times, two survey IDS
+
+2000-11-24	M-16	    2		    two survey IDs, diff observer, diff times
+2000-11-24	N-12	    2		    two survey IDs, diff observer, diff times
+2001-01-11	EE-15A	  2		    two survey IDs, diff observer, diff times
+2004-02-01	X-18	    2		    two survey IDs, diff observer, diff times
+2004-02-01	Y-19	    2		    two survey IDs, diff observer, diff times
+2004-02-06	V-13	    2	      two survey IDs, diff observer, diff times
+2004-02-06	V-14	    2		    two survey IDs, diff observer, diff times
+
+REMOVED   2004-10-16	AC-16	    2		    Duplicates. Same observer, same start time, two identical sets of counts
+REMOVED   2004-11-04	EN-7B	    2		    Duplicates. Same observer, same start time, two identical sets of counts
+REMOVED   2003-10-06	V-20	    2		    Duplicates. Multiple observers, same start time, two identical sets of counts
+REMOVED   2000-10-17	T-19	    3	      Duplicates. Same observer, same start time, two IDs (170 and 172) with identical counts. Also one ID (146) with a different start time and different counts
+2004-10-23	T-19	    2		    Duplicates. Multiple observers, same start time, two identical sets of counts  
+
+    
+6 cases of same observer at the same site on the same day
+2000-06-06	U-13	DiSt	    2	
+    REMOVED   2000-10-17	T-19	BeRa	    2	
+    REMOVED   2003-10-06	V-20	SuWi	    2	
+2003-10-16	U-12	KaGr	    2	
+    REMOVED   2004-10-16	AC-16	JiJo	    2	
+    REMOVED   2004-11-04	EN-7B	JiJo	    2	
+2005-07-15	PN-2A	BiHi	    2	
+2005-07-23	U-12	JiJo	    2	
+2020-01-04	PWRC	JoPaDa    2
+2016-02-03  AD-10 ToHi      2	
+
+```{r remove duplicated surveys}
+obs %>% filter(survey_id %in% c(
+  # These two surveys were the very first sampling of the project
+  # Not clear why there are two in one day. Perhaps it was a test run
+  29, 30,
+  # these five were duplicated, but those have been removed from the dataset already
+  172, 170,   # 172 has been removed
+  1996, 1937, # 1937 has been removed
+  2510, 2507, # 2507 has been removed
+  2519, 5938, # 5938 has been removed
+  2480, 2509  # 2509 has been removed
+  ))  %>% arrange(survey_id)
+
+obs <- obs %>% filter(!survey_id %in% c(
+  29, 30,
+  172, 1937, 2507, 5938, 2509
+))
+
+```
+
+### Aggregate by survey ID and date
+```{r aggregate observation data, warning = FALSE}
+# before joining with the survey data, the observation data needs to be aggregated
+
+  # per the CAP bird survey protocol, birds are counted *as* they are observed in sequence
+  # consequently, many species were observed multiple times in a single survey (point in the point count)
+  # we want to sum these together, under the assumption that they were distinctly identified individuals
+  obs %>% arrange(survey_date, site_code, code, survey_id)
+  obs %>% count(survey_id, site_code, survey_date, code) %>% arrange(desc(n)) # how many separate entries were made for each species on each date
+  
+  # First, summarize the amount surveyed per point count
+  obs.surveyID <- obs %>% #arrange(survey_id, code) %>% 
+    group_by(survey_id, site_code, survey_date, observer, code, common_name) %>%
+    summarize(bird_count = sum(bird_count, na.rm = TRUE)) %>% ungroup() 
+  obs.surveyID %>% arrange(survey_date, code, survey_id) 
+  
+  # obs %>% filter(seen == "FALSE") %>% filter(bird_count == 5) %>% arrange(heard)
+  
+  # now counts have been summarized by survey ID
+  # but, we want counts summarized by survey *date*, 
+  # and there were two surveys on dozens of survey dates
+  obs.surveyID %>% group_by(survey_id, survey_date, site_code) %>% filter(row_number()==1) %>% ungroup() %>% 
+    count(site_code, survey_date) %>% arrange(desc(n))
+  # in the vast majority of cases, there was only one survey per day
+  # for a small number of cases, we have two surveys in one day
+  # these weren't conducted at the same time and/or by the same two people
+  # so we can't assume that counts from one survey ID are distinct individuals from the other survey ID
+  # and thus we get the maximum count for each species
+  # we've already gotten the total number of each species per survey ID, so we just need to get the max count per day
+  
+  
+  obs.date <- obs.surveyID %>% #arrange(survey_id, code) %>% 
+    group_by(site_code, survey_date, code, common_name) %>%
+    # summarize(bird_count = max(bird_count, na.rm = TRUE)) %>% 
+    arrange(desc(bird_count)) %>% slice(1) %>%  # this way will preserve the observer identity
+    ungroup() 
+  obs.date %>% arrange(survey_date, code) 
+  
+  nrow(obs.surveyID); nrow(obs.date) 
+  # the difference between these indicate that there were previously ~40 species observations recorded under multiple survey IDs on the same date 
+  # but those have now been filtered out
+```
+
+
+
+```{r join the survey and observation data}
+# first, check the survey info by which the tables will be joined
+  obs.date %>% count(site_code, survey_date) %>% nrow()   # n = number of species in each
+  surveys %>% count(site_code, survey_date)  %>% nrow()
+  surveys %>% count(site_code, survey_date, observer) %>% filter(n > 1) # cases of multiple surveys by a single observer
+  length(unique(obs.date$survey_date)); length(unique(surveys$survey_date))
+  length(unique(obs.date$site_code)); length(unique(surveys$site_code))
+  length(unique(obs$survey_id)); length(unique(surveys$survey_id))
+  
+  # there might be a few surveys not in the 'observations' dataset,
+  # presumably because no birds were detected during these surveys
+  surveys %>% filter(!survey_id %in% unique(obs$survey_id)) 
+  
+  # obs %>% filter(!survey_id %in% unique(surveys$survey_id)) 
+  
+# try joining the observations and survey info
+  full_join(obs.date, surveys) %>% filter(!survey_id %in% unique(obs$survey_id))
+  # the join works, adding NAs to the surveys with no observations
+  # however, we will need to fill in those non-detections from the non-surveyed days, 
+  
+  # to do this, first duplicate each survey row for each species (nrow = n.surveys*n.spp = a lot of rows)
+  # second, fill in the counts with '0'
+
+  # list out all the species names
+  spp <- obs %>% 
+    arrange(code) %>% 
+    group_by(code, common_name) %>% 
+    filter(row_number() == 1) %>% 
+    dplyr::select(code, common_name) %>% 
+    data.frame()
+  # spp
+  
+  surveydays <- surveys %>% group_by(site_code, location_type, survey_date, yday, survey_year,
+                                     #observer, 
+                                     season) %>% 
+    summarize(survey_count = length(season)) %>% 
+    arrange(survey_date, site_code) %>%
+    #arrange(desc(survey_count)) %>%
+    ungroup()
+  
+  # add a new 'id column similar to survey_id' based on unique combinations of date and site
+  surveydays$site_date <- as.numeric(factor(paste0(surveydays$site_code, surveydays$survey_date)))
+
+  # a huge dataframe duplicating the survey info by the number of species
+  tmp <- data.frame(
+    #"survey_id" = rep(surveys$survey_id, each = nrow(spp)),
+    "site_date" = rep(surveydays$site_date, each = nrow(spp)),
+    "site_code" = rep(surveydays$site_code, each = nrow(spp)),
+    "location_type" = rep(surveydays$location_type, each = nrow(spp)),
+    "survey_date" = rep(surveydays$survey_date, each = nrow(spp)),
+    "yday" = rep(surveydays$yday, each = nrow(spp)),
+    "survey_year" = rep(surveydays$survey_year, each = nrow(spp)),
+    "season" = rep(surveydays$season, each = nrow(spp)),
+    #"time_start" = rep(surveys$time_start, each = nrow(spp)),
+    #"time_end" = rep(surveys$time_end, each = nrow(spp)),
+    # "observer" = rep(surveys$observer, each = nrow(spp)),
+    #"distance" = rep(surveys$distance, each = nrow(spp)),
+    "code" = rep(spp$code, length(surveydays$survey_date)),
+    "common_name" = rep(spp$common_name, length(surveydays$survey_date))
+  )
+  
+# create one big dataframe with non-detected species for each survey
+  obs.all <- full_join(obs.date, tmp)
+  obs.all[is.na(obs.all$bird_count) == TRUE,] %>% nrow()
+  obs.all[is.na(obs.all$bird_count) == FALSE,] %>% nrow() # filtered with base R
+  nrow(obs.all)
+  # for those sites that were surveyed but nothing was detected, set the count to 0
+  obs.all$bird_count[is.na(obs.all$bird_count) == TRUE] <- 0
+ 
+  
+  # how many times each site was surveyed in a given season
+  # surveydays %>% count(survey_year, season, site_code) %>% arrange(site_code, survey_year)
+  
+   
+ # finally, add a column with 1/0 to represent whether the taxon was detected in that survey
+    obs.all$det <- obs.all$bird_count
+    obs.all$det[obs.all$bird_count > 0] <- 1
+    # and add a column with unique combination of years and season
+    obs.all$year_season <- paste(obs.all$survey_year, obs.all$season, sep = "_")
+    # and turn factors back into character vectors
+    obs.all$site_code <- as.character(obs.all$site_code)
+    obs.all$location_type <- as.character(obs.all$location_type)
+    obs.all$code <- as.character(obs.all$code)
+    obs.all$common_name <- as.character(obs.all$common_name)
+    obs.all$season <- as.character(obs.all$season)
+    obs.all$bird_count <- as.integer(obs.all$bird_count)
+    
+  rm(tmp); gc()
+  
+  colnames(obs.all)
+```
+
+
+```{r filter based on survey years and seasons}
+# Firstly, we will exclude summer and fall surveys, 
+# as these seasons were not sampled after 2011 and 2004, respectively
+    # the last survey year for summer
+    obs.all %>% filter(season %in% c("3_summer")) %>% pull(survey_year) %>% range() 
+    # the last survey year for fall
+    obs.all %>% filter(season %in% c("4_fall")) %>% pull(survey_year) %>% range()   
+    # the number of sites that were sampled in those seasons, 
+    # at least in years that they were sampled
+    obs.all %>% filter(season %in% c("3_summer", "4_fall")) %>% 
+      pull(site_code) %>% unique() %>% length() 
+    
+    # Drop summer and fall. We could also do this later
+    #obs.all <- obs.all %>% filter(season %in% c("1_winter", "2_spring"))
+
+
+# Secondly, following Allen et al 2019 and Albuquerque et al 2021, we can/should exclude 2003 
+  # for its the anomalous lower sample size (due to no surveying of the riparian sites)
+  # however, we can also just filter this out later
+  #obs.all <- obs.all %>% filter(!survey_year %in% c(2003))
+    
+# Thirdly, we may end up limiting the analysis to just the sites surveyed for all 20 years
+    # i.e. the ESCA sites that were retained past 2016
+    obs.all %>% group_by(location_type) %>% summarize(year.start = min(survey_year), year.end = max(survey_year), n.site = length(unique(site_code)))
+    # Some ESCA sites (V14, W15) are part of the PASS sites after 2016, 
+    # even though they say 'ESCA'
+    # Albuquerque et al. 2021 used 46 sites up until 2016, 
+    # including some of the 'riparian' and/or NDV sites
+
+obs.all %>% filter(!location_type %in% c("desert_fertilization", "PASS")) %>% nrow()
+
+# the number of ESCA sites, which were the only ones sampled throughout the whole period
+obs.all %>% filter(location_type %in% c("ESCA")) %>% pull(site_code) %>% unique() %>% length()
+
+
+# number of sites surveyed in each year/season
+obs.all %>% 
+  group_by(site_code, survey_year, season, code)  %>%   
+  filter(code == "ABTO") %>% summarize(bird_count = max(bird_count)) %>%
+  group_by(survey_year, season) %>% summarize(n_site = length(season))
+
+```
+
+```{r view first and last surveys at each site}
+obs.all %>% group_by(site_code) %>% 
+  arrange(survey_date) %>% slice(1) %>% arrange(location_type, site_code)
+
+obs.all %>% group_by(site_code) %>% 
+  arrange(desc(survey_date)) %>% slice(1) %>% arrange(location_type, site_code)
+
+# obs.all %>% filter(site_code == "U-21")
+
+```
+
+
+```{r summary stats for the surveys}
+
+n.site <- obs.all$site_code %>% unique() %>% length()
+n.year <- obs.all$survey_year %>% unique() %>% length()
+n.season <- obs.all$season %>% as.character() %>% unique() %>% length()
+n.spp <- obs.all$code %>% unique() %>% length()
+n.site*n.year*n.season
+surveydays %>% count(site_code, survey_year, season) %>% nrow()
+# if all sites were surveyed in every season of every year, then there should be about three times more surveys
+# because there were ~2-4 surveys per season
+# however, most sites were not surveyed across the full study period
+
+obs.all %>%
+  group_by(site_code, location_type, survey_year, season, year_season, code) %>%
+  filter(code == "ABTO") %>% arrange(observer, site_code, survey_year, season)
+
+# number of survey days per site, per season
+(n.survey <- obs.all %>%
+  group_by(site_code, location_type, survey_year, season, year_season, code) %>%
+  filter(code == "ABTO") %>% 
+  summarize(n_survey = length(season)) %>% select(-code) %>% arrange(n_survey, survey_year))
+
+(n.observers <- obs.all %>%
+  group_by(site_code, location_type, survey_year, season, year_season, code) %>%
+  filter(code == "ABTO") %>% summarize(n_observers = length(unique(observer))) %>% select(-code) #%>% 
+    # arrange(n_observers, survey_year)
+  )
+
+mean(n.observers$n_observers)
+hist(n.observers$n_observers)
+max(n.observers$n_observers)
+min(n.observers$n_observers)
+sd(n.observers$n_observers)
+
+# tmp <- surveydays %>% group_by(site_code, survey_year, season) %>% dplyr::select(-c(yday, survey_date, site_date))# %>% 
+#   filter(row_number() == 1) %>% ungroup()
+# tmp %>% count(site_code, survey_year, season) %>% arrange(desc(n))
+# 
+# survey_counts <- data.frame(
+#   "site_code" = rep(sort(levels(surveydays$site_code)), each = n.year*n.season),
+#   "survey_year" = rep(rep(sort(unique(surveydays$survey_year)), each = length(unique(surveydays$season))), n.site),
+#   "season" = as.factor(rep(rep(sort(levels(surveydays$season)), length(unique(surveydays$survey_year))), n.site))
+# ) %>% left_join(tmp) #%>% count(site_code, survey_year, season) %>% arrange(desc(n))
+
+# How many sites were surveyed fewer than three times during the seasons of this analysis?
+n.survey %>%
+  filter(season %in% c("1_winter", "2_spring")) %>%
+  filter(location_type %in% c("ESCA", "riparian")) %>%
+  filter(survey_year <= 2016 & survey_year >= 2001 & survey_year != 2003) %>%
+  filter(n_survey < 3)
+
+# What was the mean number of surveys across these sites/seasons?
+n.survey %>%
+  filter(season %in% c("1_winter", "2_spring")) %>%
+  filter(location_type %in% c("ESCA", "riparian")) %>%
+  filter(survey_year <= 2016 & survey_year >= 2001 & survey_year != 2003) %>%
+  ungroup() %>%
+  # group_by(year_season) %>% 
+  summarize(mean(n_survey), sd(n_survey))
+
+# What was the mean number of surveys across these sites/seasons?
+n.observers %>%
+  filter(season %in% c("1_winter", "2_spring")) %>%
+  filter(location_type %in% c("ESCA", "riparian")) %>%
+  filter(survey_year <= 2016 & survey_year >= 2001 & survey_year != 2003) %>%
+  ungroup() %>%
+  # group_by(year_season) %>% 
+  summarize(mean(n_observers), sd(n_observers), min(n_observers), max(n_observers))
+```
+
+
+For occupancy modeling and community composition analyses, we will likely want to arrange this observation data into as a multi-dimensional array
+```{r reshape count data for multispecies models}
+# first need to designate a number of sampling occasions
+n.survey %>% filter(n_survey > 3)
+# there are only 20 seasons in which a site was sampled more than 3 times (only 14 if you exclude summer and fall)
+# so in many cases, we can likely just truncate the data at 3 surveys, but let's include five columns in that dimension for now
+
+
+# # sites X # species X # time points (survey season, in order) x survey days
+# OR
+# number of sites times two (for each season) X # species X # years X survey days
+# unique combinations of survey year and season
+# y.count <- array(dim = c(n.site, length(unique(obs.all$year_season)), n.spp, 5))
+to.keep.seasons <- c("1_winter", "2_spring") # keep just these two season in this
+spp <- spp %>% arrange(code)  # make sure the species names are sorted as well
+y.count <- array(dim = c(n.site, n.spp, max(n.survey$n_survey), n.year, length(to.keep.seasons)))
+# y.count1 <- array(dim = c(n.site, n.year, n.spp, max(n.survey$n_survey)))
+# y.count2 <- array(dim = c(n.site, n.year, n.spp, max(n.survey$n_survey)))
+str(y.count)
+# manually set parameters for testing
+t <- 24; s <- 2; occ <- 5
+str(y.count[,,occ,t,s])
+
+
+ 
+
+# add names to the array dimensions
+# the loop below needs to go through these in order
+    dimnames(y.count)[[1]] <- sort(unique(n.survey$site_code))
+    dimnames(y.count)[[2]] <- sort(spp$code)
+    dimnames(y.count)[[3]] <- paste("occ", 1:max(n.survey$n_survey), sep ="")
+    dimnames(y.count)[[4]] <- sort(unique(n.survey$survey_year))
+    dimnames(y.count)[[5]] <- sort(unique(to.keep.seasons))
+
+Sys.time() # this should take a couple minutes
+for(t in 1:dim(y.count)[4]){   # n.year
+  # print(sort(unique(n.survey$survey_year))[t])
+  for(s in 1:dim(y.count)[5]){  # length(to.keep.seasons)
+    for(occ in 1:max(n.survey$n_survey)){
+      tmp <- obs.all %>% select(site_code, code, survey_year, season, survey_date, season, bird_count) %>%
+      filter(season ==  sort(unique(to.keep.seasons))[s]) %>%  #  dimnames(y.count)[[3]][s]
+      # filter to the specific year, starting with the first when sorted numerically(/alphabetically)
+      filter(survey_year == sort(unique(n.survey$survey_year))[t]) %>%  # dimnames(y.count)[[2]][t]
+      arrange(survey_year)  %>% group_by(site_code, code) %>% 
+      # select the bird count from the specific occasion 
+      #(and use the .groups argument to get rid of the 'summarise()' message)
+      summarize(bird_count = bird_count[occ], .groups = 'drop') %>% arrange(site_code, code) %>%  # select the bird count from the specific occasion
+      pivot_wider(names_from = code, values_from = bird_count)
+    
+    # there are number of sites that were not surveyed at all in this particular season. 
+    # Add these on with all NA
+    sites.miss <- unique(n.survey$site_code[which(!n.survey$site_code %in% tmp$site_code)])
+    # add those onto the data
+    tmp[(nrow(tmp)+1):(nrow(tmp)+length(sites.miss)),]$site_code <- sites.miss
+    
+    # arrange the data and add it to the array
+    if(ncol(tmp) > 1){  # only add if we have data from some sites in that sampling period
+      y.count[,,occ,t,s] <-  tmp %>% arrange(site_code) %>% ungroup() %>% 
+                                     select(-site_code) %>% as.matrix()
+      }
+    }
+  }
+}
+Sys.time()
+
+# to verify that everything worked examine a season's abundances for a single species
+# there were a number of sites surveyed only 1 or 2 times in spring 2020, so this is a good one to check
+    # y.count[,
+    #         which(dimnames(y.count)[[2]] == "HOSP"),
+    #         ,
+    #         which(dimnames(y.count)[[4]] == "2020"),
+    #         which(dimnames(y.count)[[5]] == "2_spring")
+    #         ]
+    # obs.all %>% filter(code == "HOSP") %>% filter(survey_year == "2020") %>% filter(season == "2_spring") %>% arrange(site_code)
+
+# we can also filter species, seasons, etc.
+    # e.g., for an analysis using ESCA and Riparian sites from 2001 to 2016
+    # to.keep.years <- seq(2000, 2016, 1)
+    # to.keep.seasons <-  c("1_winter", "2_spring") # this was already defined above
+    # 
+    # to.keep.sites <- obs.all %>% 
+    #   filter(survey_year %in% to.keep.years) %>%
+    #   filter(season %in% to.keep.seasons)  %>% 
+    #   filter(location_type %in% c("ESCA", "riparian")) %>%
+    #   pull(site_code) %>% unique()
+    # 
+    # to.keep.sites
+    # to.keep.seasons
+    # to.keep.years
+    # 
+    # str(
+    #   y.count[which(dimnames(y.count)[[1]] %in% to.keep.sites), 
+    #           ,
+    #           which(dimnames(y.count)[[4]] == "HOSP"),
+    #           which(dimnames(y.count)[[2]] %in% to.keep.years),
+    #           which(dimnames(y.count)[[3]] %in% to.keep.seasons)
+    #           ]
+    # )
+    
+# for occupancy modeling, we can reduce these to by-survey detections 
+    y <- y.count
+    y[y > 1] <- 1
+    y[, which(dimnames(y.count)[[4]] == "HOSP")
+      ,
+      , 
+      which(dimnames(y.count)[[2]] == "2020"),
+        which(dimnames(y.count)[[3]] == "2_spring")
+            ]  %>% str()
+    # ysum <- apply(y, MARGIN = c(1,2,3,4), FUN = function(x) sum(x, na.rm = TRUE))
+    # str(ysum)
+    
+# we may also need an array of number of surveys by site/season
+    #str(y[,,1,])
+    K1 <- y[,1,,,]   # pick the first species, since the survey count is the same for all species
+    K1[is.na(K1)== FALSE] <- 1
+    
+    K <- apply(K1, MARGIN = c(1,3,4), FUN = function(x) sum(x, na.rm = TRUE))
+    # dimnames(K)[[2]] <- dimnames(y)[[2]]
+    # K$site_code <- rownames(K)
+    # K <- K %>% pivot_longer(!site_code, names_to = "year_season", values_to = "n_survey") %>% 
+    #   left_join(n.survey) %>% 
+    #   arrange(site_code, year_season)
+    # K$survey_year <- substr(K$year_season, start = 1, stop = 4)
+    # K$season <- substr(K$year_season, start = 6, stop = nchar(k$year_season))
+    str(K)
+    
+# we may also want to average counts across surveys
+    # if we want just the first three surveys, then do y.count[,,,,1:3], and then just divide by three
+    y.count.sum <- apply(y.count, MARGIN = c(1,2,4,5), FUN = function(x) sum(x, na.rm = TRUE))
+    # str(y.count.sum)
+    # y.count.sum[1:5, 2, 2,
+    #         99:101]
+    # K[1:5, 2, 2,
+    #         99:101]
+    
+    # mean count of each bird species across the first three surveys
+    y.count.mean <- apply(y.count, MARGIN = c(1,2,4,5), FUN = function(x) mean(x, na.rm = TRUE))
+    y.count.mean[is.nan(y.count.mean)== TRUE] <- NA
+    str(y.count.mean)
+    
+    # total abundance of birds at each site/year/season
+    abund.tot <- apply(y.count.mean, MARGIN = c(1,3,4), FUN = function(x) sum(x, na.rm = TRUE))
+```
+
+
+
+
+```{r summarize across surveys}
+# if we're planning to use occupancy or n-mixture models, our approach here would need to be different
+# but if we're not, we can looking for the minimum number of individuals at each site during each season, 
+# which would be the maximum observed in any given survey within that season
+obs.seas <- obs.all %>% 
+  group_by(code, common_name, site_code, location_type, survey_year, season) %>%
+  summarize(count_max = max(bird_count, na.rm = TRUE),   # max number of each species observed across surveys
+            count_sum = sum(bird_count),                 # sum of each species count across surveys (not unique individuals)
+            n_survey = length(bird_count),
+            det_survey = sum(det),  # number of surveys in which the species was detected
+            det = max(det),
+            # create a 'count_mean' that is an average abundance standardized by the number of surveys at that place and time period
+            count_mean = count_sum/n_survey           # mean number of each species counted across surveys
+            # we can also use the max count among surveys to represent each species' abundance
+            ) %>% full_join(n.survey)
+
+# Get 'total abundance', the number of birds of any species observed at each site x year x season
+  # Brown et al. 2022 measured total abundance "by adding the maximum number of birds observed at a site within a year for a given season."
+  # It's not entirely clear what that means, but it sounds like we could sum the mean counts across species
+  abundance.tot <- obs.seas %>% 
+    group_by(site_code, survey_year, season) %>% 
+    summarize(abundance_tot = sum(count_mean)) %>% 
+    arrange(desc(abundance_tot))
+  abundance.tot
+
+# combined total bird abundance and calculate relative abundance for each species
+obs.seas <- full_join(obs.seas, abundance.tot) %>% 
+  arrange(site_code, survey_year, season) %>% 
+  mutate(abundance_rel = count_mean/abundance_tot,
+            p_lnp = abundance_rel*log(abundance_rel+0.000000000001))   # add a very small number so that the log function works
+obs.seas %>% filter(abundance_rel > 0.4)
+```
+
+
+```{r visualize number of sites by season}
+
+# number of sites by season and location type
+(sitesbyseason <- obs.seas %>%
+  group_by(survey_year, season, location_type, code) %>%
+  filter(code == "ABTO") %>% summarize(n_site = length(season)) %>% select(-code))
+
+# visualize how many sites were surveyed in each year
+# https://community.rstudio.com/t/creating-a-stacked-barplot-or-histogram/114005
+plot1 <- ggplot(data = sitesbyseason %>% filter(season == "1_winter"), aes(x = survey_year, y=n_site, fill = location_type)) + 
+    theme_classic()  +
+    geom_col(color="white")+
+    scale_fill_brewer(palette = "Dark2", labels = c("DesFert", "ESCA", "NDV", "PASS", "Riparian", "SRBP")) +
+    coord_cartesian(xlim = c(2000, 2023), ylim = c(0, 70)) +
+    geom_text(aes(x = survey_year, y = n_site, label = n_site, group = location_type),
+                    position = position_stack(vjust = 0.5), size = 2) +
+    labs(x = "Year", y = "# of Sites", fill = "Site Group") +
+    theme(axis.text.x = element_text(face = "bold"), 
+          axis.text.y = element_text(face = "bold"), 
+          legend.title = element_text(face = "bold"), 
+          legend.text = element_text(size = 10), 
+          #axis.ticks = element_blank(),
+          axis.title.x = element_text(face = "bold", size = 18), 
+          axis.title.y = element_text(face = "bold", size = 18))
+plot1          
+
+plot2 <- ggplot(data = sitesbyseason %>% filter(season == "2_spring"), aes(x = survey_year, y=n_site, fill = location_type)) + 
+    theme_classic() +
+    geom_col(color="white")+
+    scale_fill_brewer(palette = "Dark2", labels = c("DesFert", "ESCA", "NDV", "PASS", "Riparian", "SRBP")) +
+    coord_cartesian(xlim = c(2000, 2023), ylim = c(0, 70)) +
+    geom_text(aes(x = survey_year, y = n_site, label = n_site, group = location_type),
+                    position = position_stack(vjust = 0.5), size = 2) +
+    labs(x = "Year", y = "# of Sites", fill = "Site Group") +
+    theme(axis.text.x = element_text(face = "bold"), 
+          axis.text.y = element_text(face = "bold"), 
+          legend.title = element_text(face = "bold"), 
+          legend.text = element_text(size = 10), 
+          #axis.ticks = element_blank(),
+          axis.title.x = element_text(face = "bold", size = 18), 
+          axis.title.y = element_text(face = "bold", size = 18))
+plot2
+
+
+# ggsave("./figures/trends/sitesbyseason_corebirds_1winter.png",
+#        plot1,
+#        width = 6,
+#        height = 4,
+#        units = "in",
+#        dpi = 300)
+# 
+# ggsave("./figures/trends/sitesbyseason_corebirds_2spring.png",
+#        plot2,
+#        width = 6,
+#        height = 4,
+#        units = "in",
+#        dpi = 300)
+
+# ggplot(data = sitesbyseason) +
+#   theme_classic() +
+#   geom_line(aes(x = survey_year, y = n_site, group = location_type, color = location_type))
+```
+
+
+
+
+
+
+# Export Observation Data
+```{r export the cleaned bird count data by survey, warning = FALSE}
+saveRDS(y.count, "~/GitHub/caplter-dynamicbirds/data/bird_observations_countbysurvey.rds")
+saveRDS(K, "~/GitHub/caplter-dynamicbirds/data/bird_observations_surveycount.rds")
+# write.csv(K, "./bird_observations_surveycount.csv", row.names = FALSE)
+
+# str(apply(y.count, MARGIN = c(1,2,3), FUN = 'sum', na.rm = TRUE))
+```
+
+# OPTIONAL: Export the count-level data
+```{r export the filtered seasonal count data, warning = FALSE}
+
+# write.csv(obs.seas, "~/GitHub/caplter-dynamicbirds/data/spp/bird_observations_countmeanbyseason.csv", row.names = FALSE)
+# write.csv(obs.all, "~/GitHub/caplter-dynamicbirds/data/spp/bird_observations_cleaned.csv", row.names = FALSE)
+
+```
+
+
+
+# CODE GARAGE 

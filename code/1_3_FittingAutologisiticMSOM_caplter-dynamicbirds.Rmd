@@ -1,0 +1,563 @@
+---
+title: "CAP LTER Birds 2025 - Autologistic Community Occupancy Model"
+author: "Jeffrey Haight"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, set.seed(54321), include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE, 
+  include = TRUE,
+  cache = TRUE
+  )
+rm(list = ls())
+gc()
+```
+
+```{r packages, message = FALSE, echo = TRUE, warning = FALSE}
+  library(tidyverse)
+  library(beepr)  # for notifying you when some code is  done running
+
+# for statistical modeling
+  library(performance)  # for checking model performance (multicollinearity, VIF, overdispersion, etc.)
+  library(insight)      # for extracting a lot of useful model information, using functions like 'get_variance()'
+  library(lme4)
+  library(glmmTMB)
+  library(lmerTest)     # for getting p-values out of the lmer models
+  library(MuMIn)        # for calculating R^2, among other things
+  library(vegan)        # for multivariate community analyses
+  # library(rjags)
+  library(jagsUI)       # for running Bayesian models in JAGS
+  library(mgcv)         # for GAM(M)s
+  library(itsadug)      # for GAMM plotting
+
+# for plotting
+# library(ggplot2)      # should already be in the 'tidyverse'
+  library(ggpubr)       # for adding correlations and p-values to ggplot
+  library(ggeffects)    # for plotting glmm effects in ggplot
+  library(ggcorrplot)   # for correlation plots
+  library(GGally)       # similar to ggcorrplot
+  library(gghighlight)  # for highlighting groups in ggplot
+  library(RColorBrewer)
+  library(ggridges)
+```
+
+# Import Data
+```{r import bird data, include = FALSE}
+list.files("G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/input")
+
+# This contains data assembled by the '2_1_StatisticalModelingSetup_CAPbirds' file
+load("G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/input/modelinputs_CAPbirds2024.RData")
+
+
+
+      
+```
+
+```{r bundle data}
+  # Bundle data for BUGS
+      str(bdata <- list(
+        y = ysum.model,    # total # of detections per site/species/season
+        K = K.model,      # a matrix of # of survey occasions per site/season
+        psi.cov = a.cov.occ,           # occupancy covariates, including '1' for the intercept
+        ncov.occ = dim(a.cov.occ)[3],  # number of occupancy covariates, including the intercept
+        rho.cov = a.cov.det,           # detection covariates, including '1' for the intercept
+        ncov.det = dim(a.cov.det)[3],  # number of detection covariates, including the intercept
+        traits = traits.response,      # response-trait covariates
+        n.traits = dim(traits.response)[2],
+        n.site = dim(ysum.model)[[1]], 
+        n.species = dim(ysum.model)[[2]],
+        order_vec = order_vec,
+        n.orders = length(unique(order_vec)),
+        family_vec = family_vec,
+        n.family = length(unique(family_vec)),
+        # n.survey = n.survey,  # max number of surveys
+        year_vec = year_vec,
+        n.season = dim(ysum.model)[[3]]  # number of 'seasons' AKA years
+      )
+      )
+```
+
+```{r set initial values}
+      matrix(
+        rnorm(bdata$n.spp * bdata$ncov.occ),
+        ncol = bdata$n.species,
+        nrow = bdata$ncov.occ)
+      # Initial values 
+      # zst <- apply(y[,,2,,], c(1,3,4), function(x) max(x, na.rm = T)) 
+      
+      # Observed occurrence as inits for z
+      zst <- ysum.model
+      zst[which(zst >= 1)] <- 1
+      
+      inits <- function(){ list(
+        z = zst,
+        beta.comm = c(
+          rnorm(1, -3.994, 0.05),
+          rnorm(1, -0.300, 0.05),
+          rnorm(1,  0.380, 0.05),
+          rnorm(1,  0.166, 0.05),
+          rnorm(1,  0.240, 0.05),
+          rnorm(1, -0.070, 0.05)#,
+          # rnorm(1,  0.089, 0.05),
+          # rnorm(1, -0.065, 0.05)
+        ),
+        tau.beta.comm = rep(dgamma(1, 1), bdata$ncov.occ),
+        rho.comm = rnorm(1, -2.06, 0.05),
+        tau.rho.comm = rep(dgamma(1, 1), bdata$ncov.det),
+        theta.comm = 4.0,
+        tau.theta.comm = dgamma(1, 1),
+        delta.traits = matrix(
+          rnorm(bdata$ncov.occ, 0, 0.05),
+          ncol = bdata$n.traits, nrow = bdata$ncov.occ
+        ),
+        eff.order = matrix(
+          rnorm(length(unique(order_vec)) * bdata$ncov.occ, 0, 0.05),
+          ncol = length(unique(order_vec)), nrow = bdata$ncov.occ
+        ),
+        beta.species = matrix(
+          rnorm(bdata$n.species * bdata$ncov.occ, 0, 0.1),
+          ncol = bdata$n.species,
+          nrow = bdata$ncov.occ
+          ),
+        rho.species = matrix(
+          rnorm(bdata$n.species * bdata$ncov.det, -2.05, 0.1),
+          ncol = bdata$n.species,
+          nrow = bdata$ncov.det
+          ),
+                           
+       year = matrix(
+         runif(bdata$n.species*bdata$n.season, -1, 1),
+         nrow = bdata$n.species,
+         ncol = bdata$n.season
+       ),
+       tau.year = runif(1, 0.001, 1),
+        theta.species = runif(dim(ysum.model)[2], -4.0, -3.8)#,
+        # rich = rich.naive
+      )}
+
+      data.spp %>% filter(code %in% spp.model)
+```
+
+```{r setup and run model}
+# MCMC parameters
+      # For testing that the model will run 80 samples, 300 iterations, ~4.5 minutes with 64 gb of RAM
+        # na <- 100	   # pre-burnin
+        # nb <- 240	 # burn-in
+        # ni <- 300   # iterations (including burn-in with jagsUI)
+        # nt <- 3
+        # nc <- 4
+
+      # 800 samples, 3K iterations, ~15 minutes with 64 gb RAM
+        # na <- 100	   # pre-burnin
+        # nb <- 2400	 # burn-in
+        # ni <- 3000   # iterations (including burn-in with jagsUI)
+        # nt <- 3
+        # nc <- 4
+      
+      # 1600 samples, 6k iterations
+        # na <- 100	   # pre-burnin
+        # nb <- 4800	 # burn-in
+        # ni <- 6000   # iterations (including burn-in with jagsUI)
+        # nt <- 3
+        # nc <- 4
+      
+      # 1200 samples, 5k iterations, ~50 minutes
+        # na <- 1000	 # pre-burnin
+        # nb <- 4100	 # burn-in
+        # ni <- 5000   # iterations (including burn-in with jagsUI)
+        # nt <- 3
+        # nc <- 4
+        
+        # 2400 samples, 10k iterations, ~100 minutes
+        # na <- 1000	 # pre-burnin
+        # nb <- 8200	 # burn-in
+        # ni <- 10000  # iterations (including burn-in with jagsUI)
+        # nt <- 3
+        # nc <- 4
+
+      # 12000 samples, 50k iterations, ~400 minutes with 16 gb RAM
+        # na <- 1000	 # pre-burnin
+        # nb <- 41000	 # burn-in
+        # ni <- 50000  # iterations (including burn-in with jagsUI)
+        # nt <- 3
+        # nc <- 4
+        
+      # 16000 samples, 60k iterations, ~250 minutes on 64 gb RAM
+        # na <- 1000	 # pre-burnin
+        # nb <- 48000	 # burn-in
+        # ni <- 60000  # iterations (including burn-in with jagsUI)
+        # nt <- 3
+        # nc <- 4
+      
+      # 24000 samples across four chains, 80k iterations, ~330 minutes on 64 gb RAM
+      # DELETE. No better than the 16k
+        # na <- 1000	 # pre-burnin
+        # nb <- 62000	 # burn-in
+        # ni <- 80000  # iterations (including burn-in with jagsUI)
+        # nt <- 3
+        # nc <- 4
+        
+      # 40000 samples across four chains, 82.5k iterations, ~ minutes on 64 gb RAM
+        na <- 1000	 # pre-burnin
+        nb <- 60000	 # burn-in
+        ni <- 90000  # iterations (including burn-in with jagsUI)
+        nt <- 3
+        nc <- 4
+        # This does it! All parameters are converging
+        
+      # 3600 samples, 5k iterations
+        # na <- 1000	   # pre-burnin
+        # nb <- 2300	 # burn-in
+        # ni <- 5000  # iterations (including burn-in with jagsUI)
+        # nt <- 3
+        # nc <- 4
+
+      # 36000 samples, 50k iterations
+      # na <- 1000	   # pre-burnin
+      # nb <- 23000	   # burn-in
+      # ni <- 50000    # iterations (including burn-in with jagsUI)
+      # nt <- 3
+      # nc <- 4
+     
+set.seed(54321) # for consistent 'initial' values
+    
+(start.time <- Sys.time())
+out <- jags(bdata, inits, parameters.to.save = c(
+        # community-level intercepts and covariate effects
+          "beta.comm",
+          "rho.comm",
+          "tau.beta.comm",
+          "tau.rho.comm",
+        # community-level autoregression term
+          "theta.comm",
+          "tau.theta.comm",
+        # species trait covariate effects
+          "delta.traits",
+          # "eff.order",
+        # species-level intercept and covariate effects
+          "beta.species",
+          "rho.species",
+        # Autoregression terms
+          "theta.species",
+        # Year random effects
+          "year",
+          "tau.year"#,
+        # Species-level occurrences
+          #"n.occ",   # can be estimated using 'z'
+          # "z"#,
+        # Community Composition Metrics
+          # "rich",   # can be estimated using 'z'
+          # "hill1",
+          #"H",
+          #"E",
+        # Species-level Real Parameters
+          #"psi",  # can be calculated using beta parameters
+          #"p",    # can be calculated using rho parameters
+        # Likelihood
+          # "lik"
+      ), 
+  # "G:/Shared drives/CAP USE Postdoc/projects/biodiversitydynamics/code/jags/model_DCM_2024-04-19.R", 
+  # "G:/Shared drives/CAP USE Postdoc/projects/biodiversitydynamics/code/jags/model_DCM_2024-06_03_ImplicitDynamics.R",
+  "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/code/communityoccupancy_autologistic.R",
+  # "C:/Research/code/communityoccupancy_autologistic.R",
+  n.adapt = na, n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb, parallel = T) 
+(end.time <- Sys.time())
+elapsed.time <- difftime(end.time, start.time, units='mins')
+cat(paste(paste('Posterior computed in ', elapsed.time, sep=''), ' minutes', sep=''))
+# beep()
+# 
+```
+
+
+```{r}
+ msum <- out$summary
+      # head(msum, 20)
+      msum %>% as.data.frame() %>% filter(Rhat < 1.05)
+      msum %>% as.data.frame() %>% filter(Rhat >= 1.05)
+      data.spp %>% filter(code %in% spp.model) %>% arrange(code) #%>% filter(code %in% c("WEFL", "WEWP"))
+      
+      # WEFL and WEWP are having trouble converging
+      which(ysum.model[,which(dimnames(ysum.model)[[2]] %in% c("WEFL", "WEWP")),] > 0)
+      
+      # traceplot(out)
+      
+      # Higher theta.species indicates that a species is more likely to be present when it was previously
+      # Lower indicates that species presence is not very associated with its previous presence (higher temporal turnover in site use)
+      
+      # a very high (how high?) theta indicates that a species is almost always present where it was already present before: plogis(theta) = 1
+      
+      
+```
+
+
+
+
+```{r export model results}
+
+# Export model outputs 
+# n = 30 samples
+  # write.csv(msum, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_summary30.csv")
+
+# n = 80 samples
+  # saveRDS(out$sims.list, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_80samp.rds")
+  # write.csv(msum, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output_summary/MSOM_CAPbirds_spring_summary80samp.csv")
+
+# n = 600 samples
+  # saveRDS(out$sims.list, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_600samp.rds")
+  # write.csv(msum, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output_summary/MSOM_CAPbirds_spring_summary600samp.csv")
+
+# n = 800 samples
+  # saveRDS(out$sims.list, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_800samp.rds")
+  # write.csv(msum, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output_summary/MSOM_CAPbirds_spring_summary800samp.csv")
+
+# n = 1600 samples
+  # saveRDS(out$sims.list, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_1600samp.rds")
+  # write.csv(msum, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output_summary/MSOM_CAPbirds_spring_summary1600samp.csv")
+
+# n = 2400 samples
+ # saveRDS(out$sims.list, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_2400samp.rds")
+ #  write.csv(msum, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output_summary/MSOM_CAPbirds_spring_summary2400samp.csv")
+
+
+# n = 6000 samples
+# saveRDS(out$sims.list, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_6000samp.rds")
+# write.csv(msum, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output_summary/MSOM_CAPbirds_spring_summary6000samp.csv")
+  
+  
+# n = 8000 samples
+  # saveRDS(out$sims.list, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_8000samp.rds")
+  # write.csv(msum, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output_summary/MSOM_CAPbirds_spring_summary8000samp.csv")
+
+
+# n = 12000 samples
+ # saveRDS(out$sims.list, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_12ksamp.rds")
+ #  write.csv(msum, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output_summary/MSOM_CAPbirds_spring_summary12ksamp.csv")
+
+# n = 16000 samples  
+  #  saveRDS(out$sims.list, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_16ksamp.rds")
+  # write.csv(msum, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output_summary/MSOM_CAPbirds_spring_summary16ksamp.csv")
+  
+# n = 24000 samples  
+  #  saveRDS(out$sims.list, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_24ksamp.rds")
+  # write.csv(msum, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output_summary/MSOM_CAPbirds_spring_summary24ksamp.csv")
+   
+# n = 30000 samples  
+  #  saveRDS(out$sims.list, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_30ksamp.rds")
+  # write.csv(msum, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output_summary/MSOM_CAPbirds_spring_summary30ksamp.csv")
+    
+# n = 40000 samples  
+   saveRDS(out$sims.list, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_40ksamp.rds")
+  write.csv(msum, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output_summary/MSOM_CAPbirds_spring_summary40ksamp.csv")
+
+
+# test model controlling for phylogenetic effects
+  # saveRDS(out$sims.list, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_phyl_8000samp.rds")
+  # write.csv(msum, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output_summary/MSOM_CAPbirds_spring_phyl_summary8000samp.csv")
+```
+
+# Reconstruct species occurrence matrix *Z*
+Monitoring the occurrence matrix _Z_ as a parameter uses up a lot of memory. However, since we're already monitoring all parameters in the linear predictor(s) for _psi_, we can simply reconstruct this for all sites and time periods.
+
+```{r import model results}
+tmp <- readRDS("G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_40ksamp.rds")
+msum <- read.csv("G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output_summary/MSOM_CAPbirds_spring_summary40ksamp.csv")
+# tmp <- readRDS("G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_800samp.rds")
+# msum <- read.csv("G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_summary800samp.csv")
+# tmp <- out$sims.list
+
+# For reference, export a presence/absence array
+y.model01 <- ysum.model
+y.model01[y.model01 > 1] <- 1
+saveRDS(y.model01, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/input/y_presabs01.rds")
+```
+```{r rebuild the z data}
+set.seed(54321)
+
+# Bundle data for BUGS
+      # str(bdata <- list(
+      #   y = ysum.model,    # total # of detections per site/species/season
+      #   K = K.model,      # a matrix of # of survey occasions per site/season
+      #   psi.cov = a.cov.occ,           # occupancy covariates, including '1' for the intercept
+      #   ncov.occ = dim(a.cov.occ)[3],  # number of occupancy covariates, including the intercept
+      #   rho.cov = a.cov.det,           # detection covariates, including '1' for the intercept
+      #   ncov.det = dim(a.cov.det)[3],  # number of detection covariates, including the intercept
+      #   traits = traits.response,      # response-trait covariates
+      #   n.traits = dim(traits.response)[2],
+      #   n.site = dim(ysum.model)[[1]], 
+      #   n.species = dim(ysum.model)[[2]],
+      #   order_vec = order_vec,
+      #   n.orders = length(unique(order_vec)),
+      #   family_vec = family_vec,
+      #   n.family = length(unique(family_vec)),
+      #   # n.survey = n.survey,  # max number of surveys
+      #   year_vec = year_vec,
+      #   n.season = dim(ysum.model)[[3]]  # number of 'seasons' AKA years
+      # )
+      # )
+
+# tmp <- out$sims.list
+
+# Select a random subset of the posterior samples (make sure the seed is set above)
+  # Due to computational limitations, we may not be able to analyze more that a portion of the posterior samples
+  # Instead, a random subset of the samples
+  # Approximate run time: 10-15 minutes/1000 samples with 8 GB of RAM
+    # nsamp <- length(tmp[[1]])     # to use all the samples
+    # nsamp <- length(tmp[[1]])     # to use a fraction of the samples
+    # nsamp <- 10000                # to use 10,000 random samples (as in manuscript)
+    nsamp <- 10000                   # for illustrative purposes
+    # nsamp <- 100
+    samp <- sample(1:dim(tmp[[1]])[1], size = nsamp, replace = FALSE)
+  
+  # initial objects for storing the predictions
+    # these have to be large enough to fit the max number of sites in a city
+    # max 95 sites * 20 cities = 1900 "sites" (NAs will then be removed)
+    # latent occupancy# Observed occurrence as inits for z
+    zst <- ysum.model
+    zst[which(zst >= 1)] <- 1
+    str(zst)
+    str(zCH <- array(NA, dim = c(nsamp, n.site, n.spp, n.season)))
+    # occupancy probability of each species at each site (checked for presence in the region)
+    str(psi.t <- array(NA, dim = c(nsamp, n.spp, n.site, n.season)))   
+    # str(psi.checked <- array(NA, dim = c(nsamp, n.spp)))   
+    str(hill1 <- array(NA, dim = c(nsamp, n.site*n.season)))
+    str(hill2 <- array(NA, dim = c(nsamp, n.site*n.season)))
+  
+
+#### Extract Estimates ####
+  (start.time <- Sys.time())
+  # for(k in 1:nsamp){    # randomize which samples are selected
+
+  for(j in 1:n.spp){    
+    # for the first season (year) 
+    psi.t <- plogis(
+        tmp$beta.species[samp,,j] %*% t(a.cov.occ[,1,])
+        + tmp$year[samp,j,year_vec[1]]
+        )
+    
+    # Predict occupancy for all sites (including where presence was observed)
+    # zCH[k,j,(dim(ysum)[2]*(t-1)+n.site)] <- rbinom(1, 1, psi1) 
+    
+    for(k in 1:nsamp){
+      for(s in 1:n.site){
+        # zCH[k,j,(dim(ysum)[2]*(t-1)+ s)] <- rbinom(1, 1, psi1[k,s])
+        zCH[k,s,j,1] <- rbinom(1, 1, psi.t[k,s])
+        # zCH[k,s,j,t] <- rbinom(1, 1, psi1[k,s])
+      }
+    }
+    
+    # For subsequent seasons
+    for(t in 2:n.season){
+      psi.t <- plogis(
+              tmp$beta.species[samp,,j] %*% t(a.cov.occ[,t,])
+              + tmp$theta.species[samp,j] * zCH[,s,j,t-1]
+              + tmp$year[samp,j,year_vec[t]]
+              )
+      
+      for(k in 1:nsamp){
+        for(s in 1:n.site){
+          # zCH[k,j,(dim(ysum)[2]*(t-1)+ s)] <- rbinom(1, 1, psi1[k,s])
+          zCH[k,s,j,t] <- rbinom(1, 1, psi.t[k,s])
+          # zCH[k,s,j,t] <- rbinom(1, 1, psi1[k,s])
+        }
+    }
+  }
+  
+  # Correct occurrence matrix for known occurrences and non-sampled sites
+    # and estimate alpha diversity metrics
+    for(s in 1:n.site){
+      for(t in 1:n.season){
+        
+      # If the occurrence of a species at a site was already known (Z = 1 or ysum.model > 0), 
+      # then check that its presence is 1, not based on occupancy probability
+        if(ysum.model[s,j,t] > 0 & is.na(ysum.model[s,j,t]) == FALSE){
+      # if(zst[s,j,t] > 0 & is.na(zst[s,j,t]) == FALSE){
+          # zCH[,s,j,t] <- zst[s,j,t]
+          zCH[,s,j,t] <- 1
+        } 
+        
+      # If a site was not sampled in a given year, then we do not want to include its estimate
+        # (assuming we do not want to make any interpolations)
+        if(K[s,t,2] == 0){
+          zCH[,s,j,t] <- NA
+        }
+        
+        
+        # Calculating Hill numbers 1 & 2
+      # sum of occupancy probabilities across species
+        # sum.psi <- sum(psi.checked[k,])
+        # #print(sum.psi)
+        # 
+        # sum.psi.checked <- ifelse(sum.psi == 0, 1E6, sum.psi) # avoids dividing by 0 when calculating relative psi
+        # #print(sum.psi.checked)
+        # 
+        # # relative.psi = relative occupancy: occupancy of each species divided by the across-species sum of probabilities
+        # # surrogate for relative abundance in 
+        # relative.psi <- psi.checked/sum.psi.checked    
+        # 
+        # log.relative.psi <- ifelse(relative.psi[k,]== 0,
+        #                            log(relative.psi[k,]+1E-6),
+        #                            log(relative.psi[k,])) # avoids log(0)
+        # #print(log.relative.psi)
+        # 
+        # # Calculate Hill number 1
+        # hill1[k,(dim(ysum)[2]*(r-1)+j)] <- exp(-sum(relative.psi[k,]*log.relative.psi))
+        # 
+        # # 
+        # sum.relative.psi.squared <- ifelse(sum(relative.psi[k,]^2)== 0, 
+        #                                    1E-6, 
+        #                                    sum(relative.psi[k,]^2))	#avoid division by zero again
+        # 
+        # # Calculate Hill number 2			
+        # hill2[k,(dim(ysum)[2]*(r-1)+j)] <- 1 / sum.relative.psi.squared
+        
+        
+      }
+    }
+    
+    
+    
+}
+    # print(k)
+
+      
+  (end.time <- Sys.time())
+  elapsed.time <- difftime(end.time, start.time, units='mins')
+
+    cat(paste(paste('Parameters estimated in ', elapsed.time, sep=''), ' minutes/n', sep=''))
+
+
+  # Summarize local species richness 
+  # this is essentially another way to estimate hill0, but here we use an incidence-based estimation instead of occupancy-based
+  SR <- apply(zCH, c(1,2,4), function(x) sum(x, na.rm = TRUE))
+  str(SR)
+
+  
+# summarize and export
+  zmean <- apply(zCH, MARGIN = c(2,3,4), function(x) mean(x, na.rm = TRUE))
+  str(zmean)
+  SRmean <- apply(SR, MARGIN = c(2,3), FUN = function(x) mean(x, na.rm = TRUE))
+  dimnames(zmean)[[1]] <- dimnames(ysum.model)[[1]]
+  dimnames(zmean)[[2]] <- dimnames(ysum.model)[[2]]
+  dimnames(zmean)[[3]] <- dimnames(ysum.model)[[3]]
+  
+  
+  dimnames(SRmean)[[1]] <- dimnames(ysum.model)[[1]]
+  dimnames(SRmean)[[2]] <- dimnames(ysum.model)[[3]]
+  
+
+# apply(zmean, MARGIN = 2, function(a) as.matrix(a)) %>% str()   # reformat it as a matrix
+    
+saveRDS(zCH, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/CAPbirds_spring01_16_Zoccurrence_samp10k.rds")  
+  
+saveRDS(zmean, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/CAPbirds_spring01_16_Zoccurrence_mean.rds")
+
+# 
+saveRDS(SRmean, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/CAPbirds_spring01_16_speciesrichness_mean.rds")
+
+write.csv(data.spp, "G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/input/CAPbirds_traits_297spp.csv", row.names = FALSE)
+```
