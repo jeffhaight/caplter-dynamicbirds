@@ -1,0 +1,528 @@
+---
+title: 'CAP Biodiversity Dynamics - Species Trait Data'
+author: "Jeffrey Haight"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r load necessary packages}
+rm(list = ls())
+gc()
+
+library(tidyr)
+#library(ggplot2)
+#library(gghighlight)
+#library(viridis)
+#library(RColorBrewer)
+require(dplyr)
+```
+
+
+# Import Trait Datasets
+### Lists of Observed Species - CAP LTER Core Birds
+```{r observed species}
+birds <- read.csv("C:/Research/CAPLTER/data/core_birds/listofspecies_corebirds.csv", header = TRUE) 
+# birds <- birds %>% select(-c(X))
+str(birds)
+birds %>% arrange(code)
+
+# Below is a bird list that includes added columns
+
+birds.ext <- read.csv("C:/Research/CAPLTER/data/core_birds/listofspecies_corebirds_guilds_merged.csv", header = TRUE) 
+    str(birds.ext)
+    # this includes the species from Andrade et al. 2022 and their associated ecological/cultural guilds
+    # this represents a subset of species that were observed in the PASS neighborhoods
+    # these can also be found in the file below:
+    # birds.pass <- read.csv("H:/Shared drives/CAP USE Postdoc/projects/biodiversitydynamics/data/traits/traits/birdguilds_Andradeetal2022.csv")
+    
+# add the extra data to the bird list
+    birds %>% filter(code %in% unique(birds.ext$code)) %>% arrange(code)
+    # check before joining them
+     birds.ext %>%
+      filter(!common_name %in% unique(birds$common_name)) %>%
+      arrange(common_name)
+    
+    birds %>%
+      filter(common_name %in% birds.ext$common_name) %>%
+      arrange(common_name)
+    
+    (birds <- left_join(birds, birds.ext))
+
+   
+    
+# the bird data includes unidentified species for now
+    # birds %>% filter(grepl("Unidentified", common_name))
+  
+```
+
+
+
+### EltonTraits 1.0 Database
+```{r}
+(elton.b <- read.csv("C:/Research/data/wildlife/traits/EltonTraits/BirdFuncDat.csv", header = TRUE) %>% 
+   select(-c(SpecID)) %>% 
+   arrange(Scientific))
+```
+
+### AVONET (BirdLife Species Summaries)
+```{r}
+(avonet <- read.csv("C:/Research/data/wildlife/traits/AVONET/AVONET Supplementary dataset 1 - eBird species.csv") %>%
+   dplyr::select(-c(   )))
+
+```
+Migratory:
+1 = Sedentary. 
+2 = Partially migratory, i.e. minority of population migrates long distances, or most of population undergoes short-distance migration, nomadic movements, distinct altitudinal migration, etc.
+3 = Migratory, i.e. majority of population undertakes long-distance migration
+
+
+
+### Arizona Heritage Data Management System data
+Includes state and US/Mexico federal listing statuses for all bird species
+https://www.azgfd.com/wildlife-conservation/on-the-ground-conservation/cooperative-programs/az-natural-heritage-program/
+```{r}
+consv <- read.csv("C:/Research/data/wildlife/AZGFD_HDMS/AZGFD_HDMS_All_By_Taxon_20230412_birds.csv")
+# replace blank values with NA
+    consv$ESA[which(consv$ESA == "")] <- NA
+    consv$DATE[which(consv$DATE == "")] <- NA
+    consv$CRITHAB[which(consv$CRITHAB == "")] <- NA
+    consv$BLM[which(consv$BLM == "")] <- NA
+    consv$USFS[which(consv$USFS == "")] <- NA
+    consv$MEXFED[which(consv$MEXFED == "")] <- NA
+consv
+```
+
+
+```{r}
+iucn <- read.csv("C:/Research/data/wildlife/IUCN/redlist_species_data/birds/assessments.csv")
+```
+
+
+
+# Merge Trait Datasets
+Check for alignment in scientific and English names between each of the trait datasets and the CAP bird list, then go back to revise the species list to ensure that the tables will merge properly.
+
+Let's start with the EltonTraits data. In most cases, the names in the EltonTrait database (from 2014) are probably outdated and can be updated to match the species list (which has more recent taxonomy). At the first attempt, 164/211 species had aligning scientific names while 47 did not (183 had aligning English names). After some revisions to the bird observation list itself, 199/299 matched right away. Dozens of these names will require updating in the EltonTraits database, although the 51 'unidentified' species will not ever find matches.
+
+After updating (as of 2/5/24), there are now 184/205 species merged by scientific name, while 
+```{r check merge for EltonTriats data}
+
+
+# those which will merge by scientific name
+elton.b %>%
+  filter(Scientific %in% birds$sci_name) %>%
+  arrange(Scientific)
+
+# those which will not merge by scientific name, excluding the unidentified
+birds %>%
+  filter(!sci_name %in% elton.b$Scientific) %>%
+  filter(!grepl("Unidentified", common_name)) %>%
+  arrange(sci_name)
+
+
+# those which will merge by common/English name
+elton.b %>%
+  filter(English %in% birds$common_name) %>%
+  arrange(Scientific)
+
+# those which will not merge by common/English name
+birds %>%
+  filter(!common_name %in% elton.b$English) %>%
+  filter(!grepl("Unidentified", common_name)) %>%
+  arrange(sci_name)
+
+
+```
+```{r modify names in EltonTraits}
+# Use different filters to investigate name differences from the CAP bird list
+  elton.b %>%
+    # filter(grepl('Junco', Scientific)) %>%  # There should only be dark-eyed junco, no spp.
+    # filter(grepl('Yellow-rumped Warbler', English)) %>%  # all the 'Dendroica' warblers/redstarts should be 'Setophaga'
+    # filter(grepl('Scrub-jay', English)) %>% # we can update to Woodhouse's scrub-jay, since it has been split from CA
+    # filter(grepl('Dendroica', Scientific)) %>% 
+    # filter(grepl('Egret', English)) %>%   # use Ardea alba instead of Casmerodius albus for great egret
+    # filter(grepl('Sage', English)) %>%     # stick with the newer Sagebrush Sparrow Artemisiospiza nevadensis
+    # filter(grepl('Snow Goose', English)) %>%  # Genus is now Anser
+    # filter(grepl('Ladder', English)) %>%  # Many (but not all) Picoides spp. are now Dryobates spp.
+    #filter(grepl('Nashville', English)) %>%  # was Vermivora, but now Leiothlypis 
+    # filter(grepl('Vermivora', Scientific)) %>%  # not all Vermivora are now Leiothlypis though 
+    # filter(grepl('Harrier', English)) %>%  # changed from Circus cyaneus to C. hudsonius
+    # filter(grepl('Troglodytes', Scientific)) %>%  
+      # EltonTraits still has all the winter wrens lumped together. 
+      # Since Pacific Wrens are the ones in Arizona, we'll update the trait data names to that
+    # filter(grepl('Carduelis', Scientific)) %>%  # many Carduelis spp. got put back into the resurrected genus Spinus
+    # filter(grepl('Cormorant', English)) %>%  # American cormorants are now Nannopterum
+    # filter(grepl('Wigeon', English)) %>%   # Widgeons and gadwall are now genus Mareca
+    # filter(grepl('Shoveler', English)) %>%   # Anas -> Spatula
+    # filter(grepl('Warbler', English)) %>%  arrange(English)
+      #   Wilsonia pusilla	Wilson's Warbler now Cardellina 
+      # 	Oporornis tolmiei	MacGillivray's Warbler now Geothlypis 
+    # filter(grepl('Towhee', English)) %>%  arrange(English)
+    # filter(grepl('Parula', English)) %>%  arrange(English)
+    # filter(grepl('Phalarope', English)) %>%  arrange(English)
+    # filter(grepl('House Finch', English)) %>%  arrange(English)
+    # filter(grepl('Kinglet', English)) %>%  arrange(English)
+    # filter(grepl('Gallinule', English)) %>%  arrange(English)
+    # filter(grepl('Gallinula|Porphyrio', Scientific)) %>%  arrange(Scientific) 
+      # Aha! Common Gallinule was recently split from the Common Moorhen by the AOU, 
+    # filter(grepl('Snipe', English)) %>%  arrange(English)   # Wilson's Snipe used to be a subspecies of Common Snipe
+    # filter(grepl('Teal', English)) %>%  # Anas -> Spatula
+    # filter(grepl('Gull', English)) %>%  # Larus -> Lecuophaeus
+    # filter(grepl('Willet', English)) %>%  # Catoptrophorus semipalmatus -> Tringa semipalmata
+    # filter(grepl('Rallus', Scientific)) %>%  # Clapper/mangrove/Ridgway's rail were consider the same spp. until 2014 (Rallus longirostris)
+    filter(grepl('Chickadee', English)) %>%
+    arrange(Scientific)
+
+# Mountain Chickadee	MOCH	Poecile gambeli	POEGAM
+
+# adjust names in eltontraits
+  elton.b$Scientific <- gsub("Dendroica", "Setophaga", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Parula", "Setophaga", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Casmerodius albus", "Ardea alba", elton.b$Scientific) 
+  elton.b$Scientific <- gsub("Amphispiza belli", "Artemisiospiza nevadensis", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Chen caerulescens", "Anser caerulescens", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Picoides stricklandi", "Dryobates scalaris", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Picoides villosus", "Dryobates villosus", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Picoides pubescens", "Dryobates pubescens", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Vermivora celata", "Leiothlypis celata", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Vermivora luciae", "Leiothlypis luciae", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Vermivora ruficapilla", "Leiothlypis ruficapilla", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Vermivora virginiae", "Leiothlypis virginiae", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Circus cyaneus", "Circus hudsonius", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Troglodytes troglodytes", "Troglodytes pacificus", elton.b$Scientific)
+  elton.b$English <- gsub("Winter Wren", "Pacific Wren", elton.b$English)
+  elton.b$Scientific <- gsub("Aphelocoma californica", "Aphelocoma woodhouseii", elton.b$Scientific)
+  elton.b$English <- gsub("	Western Scrub-jay", "Woodhouse's Scrub-Jay", elton.b$English)
+  elton.b$Scientific <- gsub("Carduelis lawrencei", "Spinus lawrencei", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Carduelis pinus", "Spinus pinus", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Carduelis psaltria", "Spinus psaltria", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Carduelis tristis", "Spinus tristis", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Phalacrocorax auritus", "Nannopterum auritum", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Phalacrocorax brasilianus", "Nannopterum brasilianum", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Phalacrocorax harrisi", "Nannopterum harrisi", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Anas americana", "Mareca americana", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Anas strepera", "Mareca strepera", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Anas clypeata", "Spatula clypeata", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Anas cyanoptera", "Spatula cyanoptera", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Wilsonia pusilla", "Cardellina pusilla", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Oporornis tolmiei", "Geothlypis tolmiei", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Pipilo aberti", "Melozone aberti", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Pipilo fuscus", "Melozone fusca", elton.b$Scientific)
+  
+  elton.b$Scientific <- gsub("Steganopus tricolor", "Phalaropus tricolor", elton.b$Scientific)
+  
+  elton.b$Scientific <- gsub("Carpodacus mexicanus", "Haemorhous mexicanus", elton.b$Scientific)
+  
+  elton.b$Scientific <- gsub("Regulus calendula", "Corthylio calendula", elton.b$Scientific)
+  
+  elton.b$Scientific <- gsub("Gallinago gallinago", "Gallinago delicata", elton.b$Scientific)
+  elton.b$English <- gsub("Common Snipe", "Wilson's Snipe", elton.b$English)
+  
+  elton.b$Scientific <- gsub("Gallinula chloropus", "Gallinula galeata", elton.b$Scientific)
+  elton.b$English <- gsub("Common Moorhen", "Common Gallinule", elton.b$English)
+  # species that were 'far away' and fly-through IDs
+  elton.b$Scientific <- gsub("Anas discors", "Spatula discors", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Larus pipixcan", "Leucophaeus pipixcan", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Catoptrophorus semipalmatus", "Tringa semipalmata", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Catoptrophorus semipalmatus", "Tringa semipalmata", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Rallus longirostris", "Rallus obsoletus", elton.b$Scientific)
+  elton.b$Scientific <- gsub("Parus gambeli", "Poecile gambeli", elton.b$Scientific)
+  
+# Ridgway's Rail	RIRA	Rallus obsoletus	RALOBS Rallus longirostris
+  
+  
+# those which still will not merge by scientific name
+  birds %>%
+    filter(!sci_name %in% elton.b$Scientific) %>%
+    filter(!grepl("Unidentified", common_name)) %>%
+    arrange(sci_name) 
+  # Ultimately, it is just the domestic species and the unidentified that don't have matches,
+  # but that's to be expected
+  
+
+```
+
+
+
+### Check the AVONET
+```{r}
+# those which will merge by scientific name
+avonet %>%
+  filter(Species %in% birds$sci_name) %>%
+  arrange(Species)
+   # excellent! Only three species doesn't merge (the domestics species)
+
+# those which will not merge by scientific name
+birds %>%
+  filter(!sci_name %in% avonet$Species) %>%
+    filter(!grepl("Unidentified", common_name)) %>%
+  arrange(sci_name)
+```
+
+
+### Check the AZGFD data
+```{r}
+# those which will merge by scientific name
+consv %>%
+  filter(SCIENTIFIC.NAME %in% birds$sci_name) %>%
+  arrange(SCIENTIFIC.NAME)
+   # pretty good!
+
+# those which will not merge by scientific name
+birds %>%
+  filter(!sci_name %in% consv$SCIENTIFIC.NAME) %>%
+    filter(!grepl("Unidentified", common_name)) %>%
+  arrange(sci_name)
+  # looks like it's just the domestic species, which is nice
+```
+
+### Check IUCN Red List Data
+```{r check the IUCN data}
+
+## those which will merge by scientific name
+iucn %>%
+  filter(scientificName %in% birds$sci_name) %>%
+  arrange(scientificName)
+   # pretty good!
+
+# those which will not merge by scientific name
+birds %>%
+  filter(!sci_name %in% iucn$scientificName) %>%
+    filter(!grepl("Unidentified", common_name)) %>%
+  arrange(sci_name)
+  # there are three domestic species, plus 10 introduced
+
+iucn %>%
+    # filter(grepl('Agapornis', scientificName)) %>%
+    # filter(grepl('Aphelocoma', scientificName)) %>%
+    # filter(grepl('Butorides', scientificName)) %>%
+    # filter(grepl('villosus', scientificName)) %>%
+    # filter(grepl('Icterus', scientificName)) %>%
+    # filter(grepl('Himantopus', scientificName)) %>%
+    filter(grepl('Steganopus', scientificName)) %>%
+  arrange(scientificName)
+
+# Non-domestic species
+  # Rosy-faced Lovebird	RFLO	Agapornis roseicollis
+  # Woodhouse's Scrub-Jay	WOSJ	Aphelocoma woodhouseii
+  # Green Heron	GRHE	Butorides virescens
+  # Hairy Woodpecker	HAWO	Dryobates villosus
+  # Black-necked Stilt	BNST	Himantopus mexicanus
+  # Bullock's Oriole	BUOR	Icterus bullockii
+  # Franklin's Gull	FRGU	Leucophaeus pipixcan
+  # Wilson's Phalarope	WIPH	Phalaropus tricolor
+
+# Same five domestic species
+    # Domestic Duck: n = 10***
+    # Domestic Goose: n = 6***
+    # Chinese Goose: n = 1
+    # Cockatiel: no nearby positive IDs 
+    # Common/Island Canary: n = 1
+
+  # Rosy-faced Lovebirds are not native to the continent but are not
+  # Their status will need to be added manually
+```
+
+```{r adjust names in IUCN data }
+
+
+  # The split of Woodhouse's scrub-jay was very recent
+  iucn$scientificName <- gsub("Aphelocoma californica", "Aphelocoma woodhouseii", iucn$scientificName)
+  iucn$scientificName <- gsub("Leuconotopicus villosus", "Dryobates villosus", iucn$scientificName)
+  # Green Heron: these two species were long considered (and still considered by some) to be one (Green-backed Heron)
+  iucn$scientificName <- gsub("Butorides striata", "Butorides virescens", iucn$scientificName) 
+  # Franklin's Gull: genus difference
+  iucn$scientificName <- gsub("Larus pipixcan", "Leucophaeus pipixcan", iucn$scientificName) 
+  # Bullock's Oriole: species name difference
+  iucn$scientificName <- gsub("Icterus bullockiorum", "Icterus bullockii", iucn$scientificName) 
+  # B-N Stilt: "often treated as a subspecies of the common or black-winged stilt, using the trinomial name Himantopus himantopus mexicanus" - Wikipedia
+  iucn$scientificName <- gsub("Himantopus himantopus", "Himantopus mexicanus", iucn$scientificName) 
+  # Wilson's Phalarope
+  iucn$scientificName <- gsub("Steganopus tricolor", "Phalaropus tricolor", iucn$scientificName)
+  
+  
+# those which still will still not merge by scientific name
+birds %>%
+  filter(!sci_name %in% iucn$scientificName) %>%
+    filter(!grepl("Unidentified", common_name)) %>%
+  arrange(sci_name)
+  # there are three domestic species, plus 10 introduced
+
+```
+
+### Merge them all
+```{r merge the datasets}
+# drop some unneeded columns while we're at it
+birdtraits <- birds %>% arrange(common_name) %>%
+  # select(-c(X)) %>%
+  left_join(elton.b, by = c("sci_name"= "Scientific")) %>% 
+  select(-c(
+      Diet.Source,
+      Diet.Certainty,
+      Diet.EnteredBy,
+      ForStrat.Source,
+      ForStrat.EnteredBy,
+      # Morphological traits from AVONET are more up-to-date
+      BodyMass.Value, BodyMass.SpecLevel,
+      BodyMass.Comment, BodyMass.Source,
+      Record.Comment
+      )) %>% 
+  left_join(avonet, by = c("sci_name" = "Species")) %>%
+  select(-c(
+      Avibase.ID,
+      Mass.Source, Mass.Refs.Other,
+      Inference, Traits.inferred,
+      Reference.species
+  )) %>%
+  left_join(consv, by = c("sci_name" = "SCIENTIFIC.NAME")) %>%
+  select(-c(
+    TAXON, COMMON.NAME, ELCODE, TRACK,
+    CRITHAB  # none of these species have anything in this column
+    )) %>%
+  left_join(iucn, by = c("sci_name" = "scientificName")) %>%
+  select(-c(
+    # TAXON, COMMON.NAME, ELCODE, TRACK,
+    # CRITHAB  # none of these species have anything in this column
+    )) %>%
+  # while we're at it, add a couple of derived species traits
+  mutate(
+    Diet.FruitSeed = Diet.Seed + Diet.Fruit,
+  ) %>% 
+  # drop_na(sci_name) %>%
+  arrange(common_name)
+
+birdtraits %>% filter(redlistCategory %in% c("Near Threatened", "Vulnerable")) 
+```
+
+```{r identify pollinators}
+# which birds are potentially pollinators?
+  birdtraits %>% select(common_name, code, Trophic.Niche, Diet.Nect, Diet.Fruit, Diet.Seed, Diet.FruitSeed, Diet.Inv) %>% 
+    arrange(desc(Diet.Nect), Trophic.Niche, common_name)
+
+# Pollinators
+  birdtraits$Pollinator <- 0
+  # obviously the hummingbirds
+  birdtraits$Pollinator[which(birdtraits$Trophic.Niche == "Nectarivore")] <- 1
+  birdtraits$Pollinator[which(is.na(birdtraits$Trophic.Niche) == TRUE) ] <- NA
+  # Other than that, the only other known pollinator is the white-winged dove
+  birdtraits$Pollinator[which(birdtraits$common_name %in% c(
+    "Unidentified Hummingbird", "White-winged Dove"
+  )) ] <- 1
+  # White-Winged Dove WWDO is listed as having no nectar in its diet, but that is not true in the Sonoran Desert,  
+  # where it is known to be a major migratory pollinator of saguaros
+    # Orioles drink nectar but they aren't pollinators (they are nectar thieves)
+    # Red-naped Sapsucker has doesn't have 'nectar' in its diet, that's sap (so no pollination)
+
+```
+```{r identify seed dispersers}
+# which birds are potentially seed dispersers?
+  # Frugivores should be considered the primary seed dispersers via endozoochory
+  # but, granivores and omnivores with a substantial proportion (>30%) of fruits and/or seed and their diet
+  # could be important seed dispersers
+  
+  # Following Hordley et al. 2021, we will identify seed dispersers as species with at least 30% of their
+  # diet consisting of fruit and seed
+    birdtraits[which(birdtraits$Diet.FruitSeed >= 30), ] %>%
+        select(common_name, code, Trophic.Niche, Diet.Nect, Diet.Fruit, Diet.Seed, Diet.FruitSeed, Diet.Inv) %>% 
+        arrange(desc(Diet.Fruit), Trophic.Niche, common_name)
+  #  78 species fit the bill diet-wise, but 17 of them are classified as something other than a frugivore, granivore, or omnivore
+    birdtraits[which(!birdtraits$Trophic.Niche %in% c("Frugivore", "Granivore", "Omnivore") & 
+                       birdtraits$Diet.FruitSeed >= 30), ] %>%
+        select(common_name, code, Trophic.Niche, Diet.Nect, Diet.Fruit, Diet.Seed, Diet.FruitSeed, Diet.Inv) %>% 
+        arrange(desc(Diet.Fruit), Trophic.Niche, common_name)
+
+  # In this case, seed dispersal by aquatic foragers can still be substantial (through synzoochory)
+    birdtraits$SeedDisperser <- 0
+    birdtraits$SeedDisperser[birdtraits$Diet.FruitSeed >= 30] <- 1
+    # birdtraits[which(birdtraits$Trophic.Niche %in% c("Frugivore", "Granivore", "Omnivore") & birdtraits$Diet.FruitSeed >= 30), ] <- 1
+    birdtraits$SeedDisperser[which(is.na(birdtraits$Diet.FruitSeed) == TRUE)] <- NA
+
+# Gambel's Quail is documented as eating mistletoe, so it is an example of an omnivorous/granivorous 
+    # species that acts as a seed disperser
+```
+
+```{r identify insectivores}
+ # Insectivores (terrestrial invertivores)
+birdtraits %>% filter(Diet.Inv >= 30) %>%
+        select(common_name, code, Trophic.Niche, ForStrat.wataroundsurf, ForStrat.watbelowsurf, 
+               Diet.Nect, Diet.Fruit, Diet.Seed, Diet.FruitSeed, Diet.Inv) %>% 
+        arrange(desc(Diet.Inv), Trophic.Niche, common_name)
+  # Note that there a number of invertivores that aren't in the 'Invertivore' trophic niche from AVONET  
+  # we also do have some aquatic foragers to exclude 
+  # (see ForStrat.waterlowsurf, ForStrat.wateraroundsurf, Primary.Lifestyle)
+  
+# most of these are in the 'Aquatic predator' or Herbivore aquatic' trophic niche, 
+  # but there are a few Omnivores that eat inverts (Long-billed Curlew, Cattle Egret, Franklin's Gull, Sora)
+  # so let's use the foraging strata to filter those out
+  birdtraits[which(birdtraits$ForStrat.watbelowsurf != 0 | birdtraits$ForStrat.wataroundsurf != 0), ] %>%
+        filter(Diet.Inv >= 30) %>%
+        select(common_name, code, Trophic.Niche, ForStrat.wataroundsurf, ForStrat.watbelowsurf, 
+               Diet.Nect, Diet.Fruit, Diet.Seed, Diet.FruitSeed, Diet.Inv) %>% 
+        arrange(desc(Diet.Inv), Trophic.Niche, common_name)
+
+  birdtraits[which(birdtraits$ForStrat.watbelowsurf == 0 & birdtraits$ForStrat.wataroundsurf == 0 & birdtraits$Diet.Inv >= 30), ] %>%
+        select(common_name, code, Trophic.Niche, ForStrat.wataroundsurf, ForStrat.watbelowsurf, 
+               Diet.Nect, Diet.Fruit, Diet.Seed, Diet.FruitSeed, Diet.Inv) %>% 
+        arrange(desc(Diet.Inv), Trophic.Niche, common_name)
+
+
+birdtraits$Invertivore <- 0
+birdtraits$Invertivore[which(birdtraits$ForStrat.watbelowsurf == 0 & 
+                   birdtraits$ForStrat.wataroundsurf == 0 & 
+                   birdtraits$Diet.Inv >= 30) 
+           ] <- 1
+birdtraits$Invertivore[which(is.na(birdtraits$Diet.Inv) == TRUE) ] <- NA
+
+
+
+
+```
+
+
+### examine some of the traits
+```{r}
+
+birdtraits %>% group_by(habitat_guild) %>% drop_na(habitat_guild) %>% summarize(n_habitat_guild = length(habitat_guild))
+
+birdtraits %>% group_by(cultural_niche) %>% drop_na(cultural_niche) %>% summarize(n_cultural_niche = length(cultural_niche))
+
+birdtraits %>% group_by(Trophic.Niche) %>% drop_na(Trophic.Niche) %>% summarize(n_TrophicNiche = length(Trophic.Niche))
+
+birdtraits %>% group_by(SeedDisperser) %>% drop_na(SeedDisperser) %>% 
+  summarize(n_SeedDisperser = length(SeedDisperser))
+
+birdtraits %>% group_by(waterbird_guild) %>% drop_na(waterbird_guild) %>% 
+  summarize(n_waterbird_guild = length(waterbird_guild))
+
+# Species with various conservation status designations:
+birdtraits %>% filter(is.na(SGCN) == FALSE) %>% arrange(SGCN, common_name)
+  # a total of 62 species: 43 that are Tier 2 (vulnerable in at least one of seven categories) and 19 that are Tier 3 (data insufficient)
+birdtraits %>% filter(is.na(ESA) == FALSE) %>% arrange(ESA)
+  # 4 ESA listed species: one PS = Partial Status (Willow Flycatcher), three SC = Species of Concern (Loggerhead Shrike, Peregrine Falcon, White-faced Ibis)
+birdtraits %>% filter(is.na(MEXFED) == FALSE) %>% arrange(MEXFED)
+  # 14 Mexican Federal Endangered Species: 
+    # four threatened (A), 
+    # seven special protection (PR; six raptors and the bank swallow)
+    # three have listed subspecies that are endemic to somewhere other than Arizona (Guadalupe Junco, Galapagos Great Blue Heron, C. c. obscurus)
+birdtraits %>% filter(is.na(USFS) == FALSE) %>% arrange(USFS)
+  # One species listed as sensitive by the USFS
+birdtraits %>% filter(is.na(BLM) == FALSE) %>% arrange(BLM)
+  # One species listed as sensitive by the BLM
+birdtraits %>% filter(is.na(NESL) == FALSE) %>% arrange(NESL)
+  # 7 species on the Navajo Endangered Species List (as 4 = data insufficient)
+
+```
+
+```{r export combined bird trait data}
+# drop columns and export
+# list.files("~/GitHub/caplter-dynamicbirds/data/input")
+write.csv(birdtraits, "~/GitHub/caplter-dynamicbirds/data/input/birdtraits_corebirds2025.csv", row.names = FALSE)
+```
+
+
+

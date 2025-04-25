@@ -1,0 +1,753 @@
+---
+title: "CAP Birds 2025 - Model Setup & Testing"
+author: "Jeffrey Haight"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE, 
+  include = TRUE
+  )
+rm(list = ls())
+gc()
+```
+
+```{r packages, message = FALSE, echo = TRUE}
+library(beepr)
+library(vegan)
+
+library(sf)
+library(terra)
+library(tidyverse)
+library(tidyterra)  # tidyverse methods for SpatRaster and SpatVector objects (including ggplot functions)
+# library(tidycensus)
+#library(tmap)
+#library(stars)
+library(ggcorrplot)
+library(GGally)
+library(ggpubr)   # for adding correlations and p-values to ggplot
+library(scales)
+
+# Census data settings
+# options(tigris_use_cache = TRUE)
+#census_api_key("fd53ba9b6b6ab4fa5a0fcf329401ae7d3184dc6a", install = TRUE) # set the Census API key
+
+
+# for statistical modeling
+# library(lme4)
+# library(glmmTMB)
+# library(lmerTest)   # for getting p-values out of the lmer models
+# library(MuMIn)
+# library(performance)
+#library(regclass)
+# library(GLMMadaptive)   # for calculating VIF for 'glmmTMB' models
+```
+
+# Import Data
+# Bird Species Traits
+```{r, echo = TRUE}
+# list.files("G:/Shared drives/CAP USE Postdoc/projects/biodiversitydynamics/data")
+
+  # Species Covariate Data
+      data.spp <- read.csv("~/GitHub/caplter-dynamicbirds/data/input/birdtraits_corebirds2025.csv") 
+      # str(data.spp)
+      
+      names.common <- data.spp$common_name  # names of the species sampled
+      
+ # Calculate Diet Diversity (dietdiv) = Shannon Index with the diet categories as "species"
+      # separate the relative "abundances", i.e. the proportions of each diet category
+      data.diet <- data.spp %>% dplyr::select(c(Diet.Vend, Diet.Vect, Diet.Vfish, Diet.Vunk, Diet.Inv,
+                                        Diet.Scav, Diet.Fruit, Diet.Nect, Diet.Seed, Diet.PlantO))/100
+      
+      data.diet.checked <- data.diet
+      data.diet.checked[data.diet.checked == 0] <- 1E6   # avoids dividing by 0 when calculating ln(p)
+      data.spp$dietdiv <- apply(data.diet*log(data.diet.checked), 1 , FUN = sum)*-1   # calculate the Shannon Index
+      
+      # checking the distributions of potential ID variables, 
+      # we see that the size variables are not even close to normal
+        hist(data.spp$Mass)
+        hist(data.spp$Wing.Length)
+        hist(data.spp$Hand.Wing.Index) # Hand-wing index: a surrogate for bird dispersal ability (Sheard et al. 2020)
+        hist(data.spp$dietdiv) 
+        
+        # let's log-transform mass and winglength
+        data.spp <- data.spp %>% mutate(
+          MassLog = log(Mass),
+          WingLog = log(Wing.Length)
+        )
+        hist(data.spp$MassLog)
+        hist(data.spp$WingLog)
+        # much better
+        
+
+  
+ # check collinearity
+ggcorrplot(cor((data.spp %>% select(c(
+                # Mass,
+                MassLog,
+                # Wing.Length,
+                WingLog,  # mass and wing length are very highly correlated
+                Hand.Wing.Index, 
+                dietdiv
+                ))), 
+            use = "complete.obs", method = "spearman"), 
+             hc.order = FALSE, 
+             type = "lower",
+             lab = TRUE,
+             lab_size = 2.5,
+             outline.color = "white")
+```
+
+# Species Observation Data 
+Filtered by years and sites included in this particular analysis
+```{r import species obs and abundance data, echo = TRUE, message = FALSE}
+# filter observations by sites and years upon import
+# This will define much of the spatial and temporal scope of the project
+# as well as some of the community to be included ()
+  obs <- read.csv("~/GitHub/caplter-dynamicbirds/data/input/bird_observations_countmeanbyseason.csv", header = TRUE) %>%
+    filter(season %in% c("1_winter", "2_spring")) %>%
+    filter(location_type %in% c("ESCA", "riparian")) %>%
+    # filter(location_type %in% c("desert_fertilization")) %>%
+    filter(survey_year <= 2016 & survey_year >= 2001) %>%
+    filter(!survey_year == 2003) %>%   # Following Allen et al and Albuquerque et al.
+    filter(!site_code == "M-9")  %>%    # M-9 was only surveyed in 2001
+    # number of surveys in which each species was observed across the whole study period
+    group_by(code) %>% mutate(det_project = sum(det_survey, na.rm = TRUE)) %>%
+    # Finally, what are the seasonal bird communities?
+    # Which species were observed in winter and/or spring, across the whole study period?
+    # Give those a 1 in the new 'det_season' column if they were detected in that season
+    group_by(season, code) %>% mutate(det_season = sum(det_survey)) %>% ungroup() %>% arrange(code)
+
+
+# Create lists of species
+  # 63 species were only ever observed once across the whole project
+  obs %>% filter(det_project <= 1) %>% pull(code) %>% unique() %>% length()
+  # but our analysis is by-season, so we should keep only species observed more than once in any given season
+  
+  # 111 species were only observed once across all winter surveys
+  obs %>% filter(season == "1_winter") %>% filter(det_season <= 1) %>% pull(code) %>% unique() %>% length()
+  # 102 species were only observed once across all spring surveys
+  obs %>% filter(season == "2_spring") %>% filter(det_season <= 1) %>% pull(code) %>% unique() %>% length()
+  
+obs %>% filter(season == "2_spring") %>% filter(det_season > 1) %>% pull(code) %>% unique()
+
+
+  # Create lists of identified species (all species and excluding rare species) vs. unidentified species
+  spp.known <- obs %>% filter(!grepl("Unidentified", common_name)) %>% pull(code) %>% unique()
+  spp.unknown <- obs %>% filter(grepl("Unidentified", common_name)) %>% pull(code) %>% unique()
+  
+  # list the species that we would potentially be modeling the occupancy of
+  # we would only want to analyze the non-domestic, known species that were actually detected more than once
+  spp.winter <- obs %>% group_by(code)  %>%  filter(det_survey > 0) %>%
+    filter(season == "1_winter") %>%  filter(det_season > 1) %>%
+    filter(code %in% spp.known) %>%  # known species as well
+    filter(!code %in% c("DODU", "DOGO", "ISCA", "CHGO")) %>%  # remove domestic species
+      pull(code) %>% unique()
+  
+  spp.spring <- obs %>% group_by(code) %>%  filter(det_survey > 0) %>%
+    filter(season == "2_spring") %>% filter(det_season > 1) %>% 
+    filter(code %in% spp.known) %>%
+    filter(!code %in% c("DODU", "DOGO", "ISCA", "CHGO")) %>% # remove domestic species
+      pull(code) %>% unique()
+
+
+```
+
+
+```{r format presence absence data}
+# the abundance data for each bird count (by-survey)
+  bird.counts <- readRDS("~/GitHub/caplter-dynamicbirds/data/input/bird_observations_countbysurvey.rds")
+  K <- readRDS("~/GitHub/caplter-dynamicbirds/data/input/bird_observations_surveycount.rds")
+  
+# subset the by-survey counts as well
+  bird.counts <- bird.counts[
+    which(dimnames(bird.counts)[[1]] %in% sort(unique(obs$site_code))),
+    which(dimnames(bird.counts)[[2]] %in% c(spp.winter, spp.spring)),
+    ,
+    which(dimnames(bird.counts)[[4]] %in% sort(unique(obs$survey_year))),
+    which(dimnames(bird.counts)[[5]] %in% sort(unique(obs$season)))
+    ]
+
+# turn the surveyed count data into "presence/absence" detection data (0/1/NA) during the first three surveys
+      # str(bird.counts)
+      # filter to only identified species
+      # and include only the first three surveys (there are only a handful of sites/sampling periods with > 3 surveys)
+      y <- bird.counts[,which(dimnames(bird.counts)[[2]] %in% spp.known), 1:max(K, na.rm = TRUE),,]
+      y[which(y > 0)] <- 1
+      # summarize the number of detections across multiple surveys
+      ysum <- apply(y, MARGIN = c(1, 2, 4, 5), function(x) sum(x, na.rm = TRUE))
+      # make sure the dimensions of K array (the number of surveys per sampling period and site) match the bird data
+      # str(K)  # this includes sites and periods that were not included
+      K <- K[which(dimnames(K)[[1]] %in% c(dimnames(y)[[1]])),  # sites
+             which(dimnames(K)[[2]] %in% c(dimnames(y)[[4]])),  # years
+             ]
+      K[which(K > dim(y)[[3]])] <- dim(y)[[3]]   
+ 
+  # 15 years of winter and spring data
+      str(y)        # species observations
+      str(ysum)     # species observations, summarized across survey occasions
+      str(K) # number of occasions in which each site was sampled in each season
+      range(K)
+      range(y, na.rm = T)
+      range(ysum, na.rm = T)
+      
+      # split the species observations by season
+      ysum.win <- ysum[,which(dimnames(ysum)[[2]] %in% spp.winter),,1]
+      ysum.spr <- ysum[,which(dimnames(ysum)[[2]] %in% spp.spring),,2]
+```
+
+
+
+# Environmental Data
+```{r import env data, message = FALSE}
+# Import the by-site environmental summary data published on the CAP LTER database
+env.all <- read.csv("C:/Research/CAPLTER/data/spatial/longtermenv/summaries/envsummaries_corebirds_combined.csv") %>%
+  filter(region == "1000 m buffer") %>%
+  select(-c(region, statistic))
+    
+
+# rename the 'year' columns to match
+  colnames(env.all)[which(colnames(env.all)=="year")]
+  colnames(env.all)[which(colnames(env.all)=="year")] <- "survey_year"
+  
+  # str(env.all)
+  
+# Adjusted values of ENDISI
+  endisi.adj <- read.csv("~/GitHub/caplter-dynamicbirds/data/input/indices_Landsat_corebirds_mean1000m_ISadjusted_pc1.csv") %>%
+  select(-c(datetime, n_scene, timestamp, .geo, system.index, loc_type))
+colnames(endisi.adj) <- c("ENDISIadj", "season" ,   "site_code", "survey_year" )
+
+env.all <- left_join(env.all, endisi.adj)
+
+
+# env.all %>% filter(survey_year == 2016) %>% arrange(ENDISI)
+# 
+# env.all %>% filter(survey_year == 2016) %>% arrange(ENDISIadj)
+
+# env.all %>% filter(survey_year == 2016) %>% mutate(ENDISIdiff = ENDISIadj-ENDISI) %>% select(c(site_code, loc_type, ENDISIdiff)) %>% arrange(ENDISIdiff)
+```
+
+```{r filter and standardize env variables, message = FALSE}
+
+env.model <- env.all %>%
+  # remove the survey years and sites being excluded from the analysis%>%
+  filter(survey_year <= 2016 & survey_year >= 2001) %>%
+  filter(!survey_year == 2003) %>%   # Following Allen et al and Albuquerque et al.
+  filter(loc_type %in% c("ESCA", "riparian")) %>%
+  filter(!site_code == "M-9")  %>%    # M-9 was only surveyed in 2001
+  # filter(season %in% c("1_winter", "2_spring")) %>%
+  # group to standardize by season, since seasons will be modeled separately
+  # group_by(season) %>%  
+  mutate(
+    NDBI_std = (NDBI - mean(NDBI, na.rm = TRUE))/sd(NDBI, na.rm = TRUE),
+    NISI_std = (NISI - mean(NISI, na.rm = TRUE))/sd(NISI, na.rm = TRUE),
+    NDISI_std = (NDISI - mean(NDISI, na.rm = TRUE))/sd(NDISI, na.rm = TRUE),
+    ENDISI_std = (ENDISI - mean(ENDISI, na.rm = TRUE))/sd(ENDISI, na.rm = TRUE),
+    ENDISIadj_std = (ENDISIadj - mean(ENDISIadj, na.rm = TRUE))/sd(ENDISIadj, na.rm = TRUE),
+    NDVI_std = (NDVI - mean(NDVI, na.rm = TRUE))/sd(NDVI, na.rm = TRUE),
+    SAVI_std = (SAVI - mean(SAVI, na.rm = TRUE))/sd(SAVI, na.rm = TRUE),
+    LST_std = (LST - mean(LST, na.rm = TRUE))/sd(LST, na.rm = TRUE),
+    ppt_sum_std = (ppt_sum - mean(ppt_sum, na.rm = TRUE))/sd(ppt_sum, na.rm = TRUE),
+    temp_max_std = (temp_max - mean(temp_max, na.rm = TRUE))/sd(temp_max, na.rm = TRUE),
+    temp_min_std = (temp_min - mean(temp_min, na.rm = TRUE))/sd(temp_min, na.rm = TRUE),
+    year_diff = survey_year - min(survey_year),
+    year_std = (year_diff - mean(year_diff, na.rm = TRUE))/sd(year_diff, na.rm = TRUE),
+    id = 1:length(site_code),
+  .by = c(season)) #%>% ungroup() 
+
+env.model  %>% arrange(id)
+
+
+
+```
+
+
+
+
+
+```{r split env data by season, message = FALSE, echo = TRUE}
+# check seasonal differences
+env.model  %>%
+  # group to standardize by season, since seasons will be modeled separately
+  # group_by(season) %>%  
+  reframe(
+    year_mean = mean(year_diff, na.rm = TRUE),
+    year_sd = sd(year_diff, na.rm = TRUE),
+    ENDISI_mean = mean(ENDISIadj, na.rm = TRUE),
+    ENDISI_sd = sd(ENDISIadj, na.rm = TRUE),
+    NDVI_mean = mean(NDVI, na.rm = TRUE),
+    NDVI_sd = sd(NDVI, na.rm = TRUE),
+    LST_mean = mean(LST, na.rm = TRUE),
+    LST_sd = sd(LST, na.rm = TRUE),
+    temp_mean = mean(temp_min, na.rm = TRUE),
+    temp_sd = sd(temp_min, na.rm = TRUE),
+    # ppt_sum_mean = mean(ppt_sum, na.rm = TRUE),
+    # ppt_sum_sd = sd(ppt_sum, na.rm = TRUE),
+    # id = 1:length(site_code),
+  .by = c(season)) #%>% ungroup()
+
+# Winter data
+env.win <- env.model %>%  
+  ungroup() %>%
+  filter(season == "1_winter") 
+# env.win
+
+# Spring data
+env.spr <- env.model %>%   
+  ungroup() %>%
+  filter(season == "2_spring") 
+# env.win
+
+# add winter variables to the spring data
+  env.spr$ENDISI_winter <- env.win$ENDISIadj
+  env.spr$ENDISI_winter_std <- env.win$ENDISIadj_std
+  env.spr$NDVI_winter <- env.win$NDVI
+  env.spr$NDVI_winter_std <- env.win$NDVI_std
+  env.spr$LST_winter <- env.win$LST
+  env.spr$LST_winter_std <- env.win$LST_std
+  env.spr$temp_max_winter <- env.win$temp_max
+  env.spr$temp_max_winter_std <- env.win$temp_max_std
+  # env.spr$temp_min_winter <- env.win$temp_min
+  env.spr$temp_min_winter_std <- env.win$temp_min_std
+  env.spr$ppt_sum_winter <- env.win$ppt_sum
+  env.spr$ppt_sum_winter_std <- env.win$ppt_sum_std
+  
+  length(unique(
+    env.win$site_code
+  ))
+  range(env.win$survey_year)
+  range(env.win$survey_year)
+
+  
+  
+```
+
+
+# Select the Specific Scope of the Data to Model (Season, Species, and Covariates)
+For this manuscript, we are going to focus on birds during the spring season
+```{r species and trait covariates}
+    
+      # Pick the species data to model
+        # (A) Use all the species
+              # spp.model <- dimnames(y)[[2]]
+        # (B) Use just the species that were actually detected in a given season
+              # spp.model <- spp.winter
+              spp.model <- spp.spring
+        # (C) Use a subset of species (useful for model testing)
+              # spp.model <- sort(c(
+              #                "MODO", "VERD", "HOSP", "HOFI", "GTGR", "ANHU", "NOMO", "GAQU", "ABTO", "CBTH",
+              #                "WWDO", "BCHU", "COHU", "CACW", "GIWO" # add a few species of interest
+              #                ))  
+    
+              # spp.model <- data.spp %>% filter(cultural_niche %in% c("Friend", "Celebrity")) %>% pull(code) %>% sort()
+    
+              # top 10 most abundant in winter and spring, respectively:
+              # c("VERD", "ANHU", "HOSP", "HOFI", "MODO", "GTGR", "YRWA", "ABTO", "WCSP", "CBTH")
+              # c("MODO", "VERD", "HOSP", "HOFI", "GTGR", "ANHU", "NOMO", "GAQU", "ABTO", "CBTH")
+      
+      # subset the ysum and survey count data to the specific season and species being modeled (maybe all species)
+      # ysum.model <- ysum[,which(dimnames(ysum)[[2]] %in% spp.model),,1]
+      # K.model <- K[,,1]
+      ysum.model <- ysum[,which(dimnames(ysum)[[2]] %in% spp.model),,2]
+      K.model <- K[,,2]
+      
+      
+      data.spp.model <- data.spp %>% filter(code %in% spp.model)
+      # data.spp.model
+  
+         
+# select species traits to be used as covariates
+traits.response <- data.spp.model %>%
+  # standardize trait covariates based on the modeled community
+  # filter(code %in% spp.model) %>%
+  mutate(
+          Wing_std = (Wing.Length - mean(Wing.Length, na.rm = TRUE))/sd(Wing.Length, na.rm = TRUE),
+          WingLog_std = (WingLog - mean(WingLog, na.rm = TRUE))/sd(WingLog, na.rm = TRUE),
+          Mass_std = (Mass - mean(Mass, na.rm = TRUE))/sd(Mass, na.rm = TRUE),
+          MassLog_std = (MassLog - mean(MassLog, na.rm = TRUE))/sd(MassLog, na.rm = TRUE),
+          HWI_std = (Hand.Wing.Index - mean(Hand.Wing.Index, na.rm = TRUE))/sd(Hand.Wing.Index, na.rm = TRUE),
+          dietdiv_std = (Hand.Wing.Index - mean(Hand.Wing.Index, na.rm = TRUE))/sd(Hand.Wing.Index, na.rm = TRUE)
+        ) %>% arrange(code) %>%
+  # select which covariates to model
+  select(
+    MassLog_std,
+    dietdiv_std,
+    HWI_std
+  ) %>% as.matrix(nrow = length(spp.model))
+# traits.response
+
+
+
+# Vectorize phylogenetic structure
+  # to account for phylogenetic effects, we need vectors of integers (length = # of species), 
+  # where each number corresponds to the taxon
+  
+    # taxonomic orders
+    data.spp.model$common_name[which(is.na(data.spp.model$Order) == TRUE)] # are there any with NA?
+  
+    data.spp.model <- data.spp.model %>% arrange(Order)
+    (t.orders <- unique(data.spp.model$Order))  # this might include NA
+    data.spp.model$order_vec <- as.integer(factor(data.spp.model$Order, labels = 1:(length(t.orders))))
+    order_vec <- data.spp.model %>% arrange(code) %>% pull(order_vec)
+  
+
+    # taxonomic families
+    data.spp.model <- data.spp.model %>% arrange(Family)
+    (t.families <- unique(data.spp.model$Family))
+    data.spp.model$family_vec <- as.integer(factor(data.spp.model$Family, labels = 1:(length(t.families)))) 
+    family_vec <- data.spp.model %>% arrange(code) %>% pull(family_vec) 
+          
+    data.spp.model %>% filter(code %in% spp.spring) %>% select(common_name, Order, Family)
+
+```
+
+```{r environmental covariates}
+# base dimensions for the model data
+  n.site <- dim(ysum.model)[[1]]       # number of sites 
+  n.spp <- dim(ysum.model)[[2]]        # number of species 
+  n.season <- dim(ysum.model)[[3]]     # number of sampling periods (in this case, surveys years for each season)
+  n.survey <- dim(y)[[3]]              # max number of sampling occasions
+
+# create "interaction covariates" by multiplying standardized covariates together
+env.model <- env.model %>%
+  mutate(
+    urbXveg = ENDISIadj_std*NDVI_std,
+    urbXlst = ENDISIadj_std*LST_std,
+    urbXtmin = ENDISIadj_std*temp_min_std,
+    urbXtmax = ENDISIadj_std*temp_max_std,
+    urbXppt = ENDISIadj_std*ppt_sum_std
+  )
+
+# select the covariates that will be included in the model here
+covariates.occ <- c(
+  "intercept",
+  # "ENDISI_std",
+  "ENDISIadj_std",
+  # "LST_std",
+  # "urbXtemp",
+  # "LST_std",
+  # "urbXlst",
+  "temp_min_std",
+  "urbXtmin",
+  "NDVI_std",
+  "urbXveg"#,
+  # "ppt_sum_std",
+  # "urbXppt"#,
+  # "LST_std"
+)
+covariates.det <- c(
+  "intercept"
+)
+
+  
+# Organize the covariates as matrices/arrays that can be easily subset as vectors within the model
+    # these vectors will be multiplied by the slope parameters within the regression term 
+    # the last dimension is the number of covariates, including the intercept
+      a.cov.occ <- array(NA, dim = c(n.site, n.season, length(covariates.occ))) 
+      a.cov.det <- array(NA, dim = c(n.site, n.season, length(covariates.det)))
+      # The first "covariate" will need to be multiplied the intercept, so let's start with '1' for that
+      a.cov.occ[,,1] <- 1
+      a.cov.det[,,1] <- 1
+  
+# Add the covariates that are being included  
+  str(env.model)
+
+  
+  for(n in 2:length(covariates.occ)){
+    a.cov.occ[,,n] <- env.model %>% filter(season == "2_spring") %>%
+        select(site_code, survey_year, covariates.occ[n]) %>%
+        pivot_wider(names_from = survey_year, values_from = covariates.occ[n]) %>%
+        column_to_rownames("site_code") %>% as.matrix()
+  }
+  
+
+  a.cov.occ[,1,] %>% 
+    # head(10) %>% 
+    str()
+  
+  dimnames(a.cov.occ)[[3]] <- covariates.occ
+  dimnames(a.cov.det)[[3]] <- covariates.det
+  
+  
+# an integer vector of survey year (1 = the earliest year, 2001, 15 = the latest year 2016)
+  year_vec <- 1:n.season
+  
+```
+
+
+
+
+# Export Prepped Data
+```{r export species list}
+# t# include some of the detection
+# 
+  obs.model <- obs %>% filter(code %in% spp.known) %>%
+  # calculate a global average abundance as the mean count per survey/site/year
+  mutate(abundance_mean = mean(count_mean, na.rm = TRUE), .by = c(code)) %>%
+  # group_by(code, season, survey_year) %>% mutate(abundance_tot = mean(count_mean, na.rm = TRUE)) %>%
+  # group_by(code) %>% mutate(abundance_mean = mean(abundance_tot, na.rm = TRUE)) %>%
+  group_by(code, season) %>% slice(1) %>%
+  # left_join(data.spp) %>%
+  select(c(
+    common_name, code, season,
+    det_project, det_season, abundance_mean)) %>% # everything should be the same here except det_season
+  pivot_wider(names_from = season, names_prefix = "det_", values_from = det_season) %>%
+  left_join(data.spp) %>%
+  select( # use select to reorder the columns
+    common_name,  #nombre_comun_MX,
+    sci_name,code,
+    det_project, det_1_winter, det_2_spring, abundance_mean,,
+    sci_name, nombre_comun_MX#,  
+    # popularity, congruence,
+    # Celebrity, Friend, Neighbor, Stranger
+  ) %>% arrange(common_name)
+
+obs.model$det_1_winter[which(is.na(obs.model$det_1_winter) == TRUE)] <- 0
+obs.model$det_2_spring[which(is.na(obs.model$det_2_spring) == TRUE)] <- 0
+
+obs.model %>% filter(code %in% spp.winter) %>% arrange(desc(det_project)) %>% arrange(common_name)
+obs.model %>% filter(code %in% spp.spring) %>% arrange(desc(det_project))
+
+
+# write.csv((obs.model %>% filter(code %in% spp.winter)), "~/GitHub/caplter-dynamicbirds/figures/supplementarytable_specieslist_winter.csv", row.names = FALSE)
+
+write.csv((obs.model %>% filter(code %in% spp.spring)), "~/GitHub/caplter-dynamicbirds/figures/supplementarytable_specieslist_spring.csv", row.names = FALSE)
+```
+
+
+```{r export model input data}
+rm(
+  obs,
+  env.all, endisi.adj,
+  data.diet.checked, data.diet,
+  # data.spp.obs,
+  plot.trend
+)
+save.image(file = "~/GitHub/caplter-dynamicbirds/data/input/modelinputs_dynamicbirds2025.RData")
+```
+
+
+# BONUS: Visualize environmental data and collinearity
+
+```{r ENDISI uncorrected vs corrected}
+env.model %>% filter(!season %in% c("annual")) %>%
+          ggplot(aes(x = ENDISI, y = ENDISIadj, group = season, col = season)) +
+  theme_classic() + 
+  geom_point(alpha = 0.3, shape = 16) +
+  geom_smooth(method = "lm")+
+  # scale_color_brewer(palette = "Dark2") +
+  # scale_color_manual(values = pal_season) +
+  stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
+  labs(x = "ENDISI uncorrected", y = "ENDISI corrected")
+```
+```{r ENDISI vs NDVI}
+# NDVI peaks in moderately urbanized areas, except not quite during the winter
+env.model %>% filter(!season %in% c("annual")) %>%# filter(season %in% c("2_spring")) %>%
+          ggplot(aes(x = ENDISIadj, y = NDVI, group = season, col = season)) +
+  theme_classic() + 
+  geom_point(alpha = 0.3, shape = 16) +
+  # geom_smooth(method = "lm")+
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2))+
+  # scale_color_manual(values = pal_season) +
+  stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
+  labs(x = "Urbanization (ENDISI)", y = "NDVI")
+
+env.model %>% filter(!season %in% c("annual")) %>% #filter(season %in% c("2_spring")) %>%
+          ggplot(aes(x = ENDISIadj_std^2, y = NDVI, group = season, col = season)) +
+  theme_classic() + 
+  geom_point(alpha = 0.3, shape = 16) +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2))+
+  # scale_color_brewer(palette = "Dark2") +
+  # scale_color_manual(values = pal_season) +
+  stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
+  labs(x = "Quadratic Urbanization (ENDISI^2)", y = "NDVI")
+
+
+```
+```{r ENDISI vs Min Temp}
+# significantly but not highly correlated, as one would expect
+env.model %>% filter(!season %in% c("annual")) %>% #filter(season %in% c("2_spring")) %>%
+          ggplot(aes(x = ENDISIadj, y = temp_min, group = season, col = season)) +
+  theme_classic() + 
+  geom_point(alpha = 0.3, shape = 16) +
+  geom_smooth(method = "lm")+
+  # scale_color_brewer(palette = "Dark2") +
+  # scale_color_manual(values = pal_season) +
+  stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
+  labs(x = "Urbanization (ENDISI)", y = "Air Temperature (Daily Minimum)")
+```
+
+```{r urban vs LST}
+# slight negative correlation between ENDISI and LST in spring at modeled sites
+# Somewhat odd, but more vegetation within moderately urbanized environments could have a stronger cooling effects during spring
+env.all %>% filter(!season %in% c("annual")) %>% filter(season %in% c("2_spring")) %>%
+          ggplot(aes(x = ENDISIadj, y = LST, group = season, col = season)) +
+  theme_classic() + 
+  geom_point(alpha = 0.3, shape = 16) +
+  geom_smooth(method = "lm")+
+  # scale_color_brewer(palette = "Dark2") +
+  # scale_color_manual(values = pal_season) +
+  stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
+  labs(x = "Urbanization (ENDISI)", y = "Land Surface Temperature")
+```
+
+```{r LST vs Min Temp}
+# slight positive correlations between air and surface temperature in spring and fall
+env.model %>% filter(!season %in% c("annual")) %>% #filter(season %in% c("2_spring")) %>%
+          ggplot(aes(x = LST, y = temp_min, group = season, col = season)) +
+  theme_classic() + 
+  geom_point(alpha = 0.3, shape = 16) +
+  geom_smooth(method = "lm")+
+  # scale_color_brewer(palette = "Dark2") +
+  # scale_color_manual(values = pal_season) +
+  stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
+  labs(x = "LST", y = "Air Temperature (Daily Minimum")
+
+```
+```{r visualize env trends}
+# Urbanization trends (adjusted ENDISI)
+  # across all sites and years: a very slight increase, if anything
+  (plot.trend <- env.all %>% filter(!season %in% c("annual")) %>%
+      ggplot(aes(x = survey_year, y = ENDISIadj, group = season, color = season)) +
+      geom_point(alpha = 0.3, shape = 16, position = position_dodge(width = 0.6)) +
+      geom_smooth(method = "gam", se = FALSE) +
+      # scale_color_brewer(palette = "Dark2") +
+      
+      stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
+      # geom_smooth(aes)
+      labs(x = "Year", y = "Impervious Surface (ENDISI)") +
+      theme_bw()+
+      theme(
+          legend.position = "none",
+          axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 16),
+          axis.text.y = element_text(size = 16),
+          axis.title = element_text(face = "bold", size = 16)
+      ))
+  
+  # across only the modeled sites: very slight decrease over time, if anything
+  # but essentially, no substantial change in impervious surface
+  (plot.trend <- env.model %>% filter(!season %in% c("annual")) %>%
+      ggplot(aes(x = survey_year, y = ENDISIadj, group = season, color = season)) +
+      geom_point(alpha = 0.3, shape = 16, position = position_dodge(width = 0.6)) +
+      geom_smooth(method = "gam", se = FALSE) +
+      # scale_color_brewer(palette = "Dark2") +
+      
+      stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
+      # geom_smooth(aes)
+      labs(x = "Year", y = "Impervious Surface (ENDISI)") +
+      theme_bw()+
+      theme(
+          legend.position = "none",
+          axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 16),
+          axis.text.y = element_text(size = 16),
+          axis.title = element_text(face = "bold", size = 16)
+      ))
+
+    # Unadjusted ENDISI
+    (plot.trend <- env.model %>% filter(!season %in% c("annual")) %>%
+        ggplot(aes(x = survey_year, y = ENDISI, group = season, color = season)) +
+        geom_point(alpha = 0.3, shape = 16, position = position_dodge(width = 0.6)) +
+        geom_smooth(method = "gam", se = FALSE) +
+        # scale_color_brewer(palette = "Dark2") +
+        
+        # stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
+        # geom_smooth(aes)
+        labs(x = "Year", y = "Impervious Surface (ENDISI)") +
+        theme_bw()+
+        theme(
+            legend.position = "none",
+            axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 16),
+            axis.text.y = element_text(size = 16),
+            axis.title = element_text(face = "bold", size = 16)
+        ))
+    
+    (plot.trend <- env.model %>% filter(!season %in% c("annual")) %>%
+        ggplot(aes(x = survey_year, y = ENDISIadj, group = season, color = season)) +
+        geom_point(alpha = 0.3, shape = 16, position = position_dodge(width = 0.6)) +
+        geom_smooth(method = "gam", se = FALSE) +
+        # scale_color_brewer(palette = "Dark2") +
+        
+        # stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
+        # geom_smooth(aes)
+        labs(x = "Year", y = "Impervious Surface (ENDISI adjusted)") +
+        theme_bw()+
+        theme(
+            legend.position = "none",
+            axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 16),
+            axis.text.y = element_text(size = 16),
+            axis.title = element_text(face = "bold", size = 16)
+        ))
+
+    
+    # Urbanization trend by site
+    # here we can see there are a handful of sites that appear to have increased during the earlier years
+    (plot.trend <- env.model %>% filter(season %in% c("2_spring")) %>%
+        ggplot(aes(x = survey_year, y = ENDISIadj, group = site_code)) +
+        geom_point(alpha = 0.3, shape = 16, position = position_dodge(width = 0.6)) +
+        geom_smooth(method = "gam", se = FALSE) +
+        # scale_color_brewer(palette = "Dark2") +
+        
+        # stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
+        # geom_smooth(aes)
+        labs(x = "Year", y = "Impervious Surface (ENDISI adjusted)") +
+        theme_bw()+
+        theme(
+            legend.position = "none",
+            axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 16),
+            axis.text.y = element_text(size = 16),
+            axis.title = element_text(face = "bold", size = 16)
+        ))
+
+
+ # lines, points, and error bars
+(plot.trend <- env.model %>% filter(!season == "annual") %>% reframe(mean = mean(ENDISIadj), median = median(ENDISIadj),
+                                    sd = sd(ENDISIadj), se = sd(ENDISIadj)/sqrt(length(ENDISIadj)), 
+                                    .by = c(survey_year, season)) %>%
+  ggplot(aes(x = survey_year, y = mean, group = season, color = season)) +
+  geom_errorbar(aes(ymin = (mean-1.96*se), ymax = (mean+1.96*se)), width = 0.4, size = 0.4, position = position_dodge(width = 0.5),
+                alpha = 0.5) +
+  geom_point(shape = 16, position = position_dodge(width = 0.5)) +
+  geom_line(linewidth = 0.5, position = position_dodge(width = 0.5)) +
+  # scale_color_brewer(palette = "Dark2") +
+  # scale_color_manual(values = pal_season) +
+  scale_y_continuous(labels = label_number(accuracy = 0.01)) +
+  # stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
+  # coord_cartesian(ylim = c(0,30)) +
+  labs(x = "Year", y = "Impervious Surface \n(ENDISI adjusted)") +
+  theme_bw()+
+    theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 14),
+    axis.text.y = element_text(size = 14),
+    axis.title = element_text(face = "bold", size = 16)
+  ))  
+
+
+(plot.trend <- env.all %>% filter(!season == "annual") %>% reframe(mean = mean(ENDISIadj), median = median(ENDISIadj),
+                                    sd = sd(ENDISIadj), se = sd(ENDISIadj)/sqrt(length(ENDISIadj)), 
+                                    .by = c(survey_year, season)) %>%
+  ggplot(aes(x = survey_year, y = mean, group = season, color = season)) +
+  geom_errorbar(aes(ymin = (mean-1.96*se), ymax = (mean+1.96*se)), width = 0.4, size = 0.4, position = position_dodge(width = 0.5),
+                alpha = 0.5) +
+  geom_point(shape = 16, position = position_dodge(width = 0.5)) +
+  geom_line(linewidth = 0.5, position = position_dodge(width = 0.5)) +
+  # scale_color_brewer(palette = "Dark2") +
+  # scale_color_manual(values = pal_season) +
+  scale_y_continuous(labels = label_number(accuracy = 0.01)) +
+  # stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
+  # coord_cartesian(ylim = c(0,30)) +
+  labs(x = "Year", y = "Impervious Surface \n(ENDISI adjusted)") +
+  theme_bw()+
+    theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 14),
+    axis.text.y = element_text(size = 14),
+    axis.title = element_text(face = "bold", size = 16)
+  ))  
+```
+
