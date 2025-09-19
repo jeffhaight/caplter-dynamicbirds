@@ -104,12 +104,12 @@ ggcorrplot(cor((data.spp %>% select(c(
 ```
 
 # Species Observation Data 
-Filtered by years and sites included in this particular analysis
-```{r import species obs and abundance data, echo = TRUE, message = FALSE}
+Use the full count dataset to filter by years and sites included in this particular analysis
+```{r import species obs and count data, echo = TRUE, message = FALSE}
 # filter observations by sites and years upon import
 # This will define much of the spatial and temporal scope of the project
 # as well as some of the community to be included ()
-  obs <- read.csv("~/GitHub/caplter-dynamicbirds/data/input/bird_observations_countmeanbyseason.csv", header = TRUE) %>%
+  obs <- read.csv("~/GitHub/caplter-dynamicbirds/data/input/core_birds_countmeanbyseason.csv", header = TRUE) %>%
     filter(season %in% c("1_winter", "2_spring")) %>%
     filter(location_type %in% c("ESCA", "riparian")) %>%
     # filter(location_type %in% c("desert_fertilization")) %>%
@@ -159,20 +159,11 @@ obs %>% filter(season == "2_spring") %>% filter(det_season > 1) %>% pull(code) %
 ```
 
 
-```{r format presence absence data}
-# the abundance data for each bird count (by-survey)
-  bird.counts <- readRDS("~/GitHub/caplter-dynamicbirds/data/input/bird_observations_countbysurvey.rds")
-  K <- readRDS("~/GitHub/caplter-dynamicbirds/data/input/bird_observations_surveycount.rds")
+```{r import count data and reformat to presence absence}
+# the by-survey species count data for each bird point-count survey
+  bird.counts <- readRDS("~/GitHub/caplter-dynamicbirds/data/input/core_birds_obs_countbysurvey.rds")
+  K <- readRDS("~/GitHub/caplter-dynamicbirds/data/input/core_birds_obs_surveycount.rds")
   
-# subset the by-survey counts as well
-  bird.counts <- bird.counts[
-    which(dimnames(bird.counts)[[1]] %in% sort(unique(obs$site_code))),
-    which(dimnames(bird.counts)[[2]] %in% c(spp.winter, spp.spring)),
-    ,
-    which(dimnames(bird.counts)[[4]] %in% sort(unique(obs$survey_year))),
-    which(dimnames(bird.counts)[[5]] %in% sort(unique(obs$season)))
-    ]
-
 # turn the surveyed count data into "presence/absence" detection data (0/1/NA) during the first three surveys
       # str(bird.counts)
       # filter to only identified species
@@ -186,21 +177,83 @@ obs %>% filter(season == "2_spring") %>% filter(det_season > 1) %>% pull(code) %
       K <- K[which(dimnames(K)[[1]] %in% c(dimnames(y)[[1]])),  # sites
              which(dimnames(K)[[2]] %in% c(dimnames(y)[[4]])),  # years
              ]
-      K[which(K > dim(y)[[3]])] <- dim(y)[[3]]   
- 
-  # 15 years of winter and spring data
-      str(y)        # species observations
-      str(ysum)     # species observations, summarized across survey occasions
-      str(K) # number of occasions in which each site was sampled in each season
-      range(K)
-      range(y, na.rm = T)
-      range(ysum, na.rm = T)
+      K[which(K > dim(y)[[3]])] <- dim(y)[[3]] 
       
-      # split the species observations by season
-      ysum.win <- ysum[,which(dimnames(ysum)[[2]] %in% spp.winter),,1]
-      ysum.spr <- ysum[,which(dimnames(ysum)[[2]] %in% spp.spring),,2]
+      # create 0-1 detection/non-detection data array
+      y01 <- ysum
+      y01[which(y01 > 0)] <- 1
+ 
+    # 24 years of winter and spring data
+      dim(y)        # species observations
+      str(ysum)     # species observations, summarized as the number of surveys in which the species was detected
+      str(y01)      # species observations, summarized as whether the species was detected across any survey in a season
+      str(K) # number of occasions in which each site was sampled in each season
+
+```
+```{r filter pre-abs data for study scope}
+# filter each of the different datasets to include just the focal study periods and sites
+bird.counts <- bird.counts[
+      which(dimnames(bird.counts)[[1]] %in% sort(unique(obs$site_code))),
+      which(dimnames(bird.counts)[[2]] %in% c(spp.winter, spp.spring)),
+      ,
+      which(dimnames(bird.counts)[[4]] %in% sort(unique(obs$survey_year))),
+      which(dimnames(bird.counts)[[5]] %in% sort(unique(obs$season)))
+      ] 
+
+  y <- y[
+      which(dimnames(y)[[1]] %in% sort(unique(obs$site_code))),
+      which(dimnames(y)[[2]] %in% c(spp.winter, spp.spring)),
+      ,
+      which(dimnames(y)[[4]] %in% sort(unique(obs$survey_year))),
+      which(dimnames(y)[[5]] %in% sort(unique(obs$season)))
+      ]  
+  
+  ysum <- ysum[
+      which(dimnames(ysum)[[1]] %in% sort(unique(obs$site_code))),
+      which(dimnames(ysum)[[2]] %in% c(spp.winter, spp.spring)),
+      which(dimnames(ysum)[[3]] %in% sort(unique(obs$survey_year))),
+      which(dimnames(ysum)[[4]] %in% sort(unique(obs$season)))
+      ]
+  
+  y01 <- y01[
+      which(dimnames(y01)[[1]] %in% sort(unique(obs$site_code))),
+      which(dimnames(y01)[[2]] %in% c(spp.winter, spp.spring)),
+      which(dimnames(y01)[[3]] %in% sort(unique(obs$survey_year))),
+      which(dimnames(y01)[[4]] %in% sort(unique(obs$season)))
+      ]  
+
+# 15 years of winter and spring data
+    str(y)        # species observations
+    str(ysum)     # species observations, summarized across survey occasions
+    str(y01)      # species observations
+    str(K) # number of occasions in which each site was sampled in each season
+    range(K)
+    range(y, na.rm = T)
+    range(ysum, na.rm = T)
+      
+# split the species observations by season
+  ysum.win <- ysum[,which(dimnames(ysum)[[2]] %in% spp.winter),,1]
+  ysum.spr <- ysum[,which(dimnames(ysum)[[2]] %in% spp.spring),,2]
 ```
 
+### Optional: reshape and export additional data format
+While we're at it, we can reshape some of the datasets that don't go into the occupancy model and export them in other useful formats
+```{r optional - reformat and export other data}
+# Average the species counts across the multiple surveys from each year and season
+# This is a reformatted version of the data from Haight et al. 2025 (Urbanization and climate drive long-term bird community...)\
+  count.mean <- apply(bird.counts, MARGIN = c(1, 2, 4, 5), function(x) mean(x, na.rm = TRUE))
+  
+  saveRDS(count.mean[,which(dimnames(ysum)[[2]] %in% spp.winter),,1]
+        , "~/GitHub/caplter-dynamicbirds/data/input/core_birds_obs_meancount_winter15yr.rds")
+  saveRDS(count.mean[,which(dimnames(ysum)[[2]] %in% spp.spring),,2]
+        , "~/GitHub/caplter-dynamicbirds/data/input/core_birds_obs_meancount_spring15yr.rds")
+
+# Export overall presence absence split by season
+  saveRDS(y01[,which(dimnames(ysum)[[2]] %in% spp.winter),,1]
+        , "~/GitHub/caplter-dynamicbirds/data/input/y_presabs01_winter15yr.rds")
+  saveRDS(y01[,which(dimnames(ysum)[[2]] %in% spp.spring),,2]
+        , "~/GitHub/caplter-dynamicbirds/data/input/y_presabs01_spring15yr.rds")
+```
 
 
 # Environmental Data

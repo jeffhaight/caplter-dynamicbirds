@@ -1367,9 +1367,9 @@ plot2
 
 # Export Observation Data
 ```{r export the cleaned bird count data by survey, warning = FALSE}
-saveRDS(y.count, "~/GitHub/caplter-dynamicbirds/data/input/bird_observations_countbysurvey.rds")
-saveRDS(K, "~/GitHub/caplter-dynamicbirds/data/input/bird_observations_surveycount.rds")
-# write.csv(K, "./bird_observations_surveycount.csv", row.names = FALSE)
+saveRDS(y.count, "~/GitHub/caplter-dynamicbirds/data/input/core_birds_obs_countbysurvey.rds")
+saveRDS(K, "~/GitHub/caplter-dynamicbirds/data/input/core_birds_obs_surveycount.rds")
+# write.csv(K, "./core_birds_obs_surveycount.csv", row.names = FALSE)
 
 # str(apply(y.count, MARGIN = c(1,2,3), FUN = 'sum', na.rm = TRUE))
 ```
@@ -1377,8 +1377,8 @@ saveRDS(K, "~/GitHub/caplter-dynamicbirds/data/input/bird_observations_surveycou
 # OPTIONAL: Export the count-level data
 ```{r export the filtered seasonal count data, warning = FALSE}
 
-write.csv(obs.seas, "~/GitHub/caplter-dynamicbirds/data/input/bird_observations_countmeanbyseason.csv", row.names = FALSE)
-# write.csv(obs.all, "~/GitHub/caplter-dynamicbirds/data/input/bird_observations_cleaned.csv", row.names = FALSE)
+write.csv(obs.seas, "~/GitHub/caplter-dynamicbirds/data/input/core_birds_countmeanbyseason.csv", row.names = FALSE)
+# write.csv(obs.all, "~/GitHub/caplter-dynamicbirds/data/input/core_birds_obs_cleaned.csv", row.names = FALSE)
 
 ```
 
