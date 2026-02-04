@@ -48,10 +48,10 @@ gc()
 
 # Import Data
 ```{r import bird data, include = FALSE}
-list.files("~/GitHub/caplter-dynamicbirds/data")
+list.files("~/GitHub/caplter-dynamicbirds/data/input")
 
 # This contains data assembled by the '2_1_StatisticalModelingSetup_CAPbirds' file
-load("~/GitHub/caplter-dynamicbirds/data/modelinputs_dynamicbirds2025.RData")
+load("~/GitHub/caplter-dynamicbirds/data/input/modelinputs_dynamicbirds2025.RData")
 
 
 
@@ -63,9 +63,9 @@ load("~/GitHub/caplter-dynamicbirds/data/modelinputs_dynamicbirds2025.RData")
       str(bdata <- list(
         y = ysum.model,    # total # of detections per site/species/season
         K = K.model,      # a matrix of # of survey occasions per site/season
-        psi.cov = a.cov.occ,           # occupancy covariates, including '1' for the intercept
+        cov.psi = a.cov.occ,           # occupancy covariates, including '1' for the intercept
         ncov.occ = dim(a.cov.occ)[3],  # number of occupancy covariates, including the intercept
-        rho.cov = a.cov.det,           # detection covariates, including '1' for the intercept
+        cov.rho = a.cov.det,           # detection covariates, including '1' for the intercept
         ncov.det = dim(a.cov.det)[3],  # number of detection covariates, including the intercept
         traits = traits.response,      # response-trait covariates
         n.traits = dim(traits.response)[2],
@@ -83,10 +83,6 @@ load("~/GitHub/caplter-dynamicbirds/data/modelinputs_dynamicbirds2025.RData")
 ```
 
 ```{r set initial values}
-      matrix(
-        rnorm(bdata$n.spp * bdata$ncov.occ),
-        ncol = bdata$n.species,
-        nrow = bdata$ncov.occ)
       # Initial values 
       # zst <- apply(y[,,2,,], c(1,3,4), function(x) max(x, na.rm = T)) 
       
@@ -96,6 +92,8 @@ load("~/GitHub/caplter-dynamicbirds/data/modelinputs_dynamicbirds2025.RData")
       
       inits <- function(){ list(
         z = zst,
+        # beta0.comm = rep(rnorm(1, -3.994, 0.05), bdata$n.season),
+        beta0.comm = rnorm(1, -3.994, 0.05),
         beta.comm = c(
           rnorm(1, -3.994, 0.05),
           rnorm(1, -0.300, 0.05),
@@ -106,7 +104,8 @@ load("~/GitHub/caplter-dynamicbirds/data/modelinputs_dynamicbirds2025.RData")
           # rnorm(1,  0.089, 0.05),
           # rnorm(1, -0.065, 0.05)
         ),
-        tau.beta.comm = rep(dgamma(1, 1), bdata$ncov.occ),
+        tau.beta0.comm = dgamma(1, 1),
+        tau.beta.comm = rep(dgamma(1, 1), (bdata$ncov.occ)),
         rho.comm = rnorm(1, -2.06, 0.05),
         tau.rho.comm = rep(dgamma(1, 1), bdata$ncov.det),
         theta.comm = 4.0,
@@ -115,14 +114,15 @@ load("~/GitHub/caplter-dynamicbirds/data/modelinputs_dynamicbirds2025.RData")
           rnorm(bdata$ncov.occ, 0, 0.05),
           ncol = bdata$n.traits, nrow = bdata$ncov.occ
         ),
-        eff.order = matrix(
-          rnorm(length(unique(order_vec)) * bdata$ncov.occ, 0, 0.05),
-          ncol = length(unique(order_vec)), nrow = bdata$ncov.occ
-        ),
+        # eff.order = matrix(
+        #   rnorm(length(unique(order_vec)) * bdata$ncov.occ, 0, 0.05),
+        #   ncol = length(unique(order_vec)), nrow = bdata$ncov.occ
+        # ),
+        # beta0.species = (),
         beta.species = matrix(
-          rnorm(bdata$n.species * bdata$ncov.occ, 0, 0.1),
+          rnorm(bdata$n.species * (bdata$ncov.occ), 0, 0.1),
           ncol = bdata$n.species,
-          nrow = bdata$ncov.occ
+          nrow = (bdata$ncov.occ)
           ),
         rho.species = matrix(
           rnorm(bdata$n.species * bdata$ncov.det, -2.05, 0.1),
@@ -138,77 +138,28 @@ load("~/GitHub/caplter-dynamicbirds/data/modelinputs_dynamicbirds2025.RData")
        tau.year = runif(1, 0.001, 1),
         theta.species = runif(dim(ysum.model)[2], -4.0, -3.8)#,
         # rich = rich.naive
-      )}
+        )
+      }
 
       data.spp %>% filter(code %in% spp.model)
 ```
 
 ```{r setup and run model}
 # MCMC parameters
-      # For testing that the model will run 80 samples, 300 iterations, ~4.5 minutes with 64 gb of RAM
-        # na <- 100	   # pre-burnin
-        # nb <- 240	 # burn-in
-        # ni <- 300   # iterations (including burn-in with jagsUI)
-        # nt <- 3
-        # nc <- 4
-
-      # 800 samples, 3K iterations, ~15 minutes with 64 gb RAM
-        # na <- 100	   # pre-burnin
-        # nb <- 2400	 # burn-in
-        # ni <- 3000   # iterations (including burn-in with jagsUI)
-        # nt <- 3
-        # nc <- 4
-      
-      # 1600 samples, 6k iterations
-        # na <- 100	   # pre-burnin
-        # nb <- 4800	 # burn-in
-        # ni <- 6000   # iterations (including burn-in with jagsUI)
-        # nt <- 3
-        # nc <- 4
-      
-      # 1200 samples, 5k iterations, ~50 minutes
-        # na <- 1000	 # pre-burnin
-        # nb <- 4100	 # burn-in
-        # ni <- 5000   # iterations (including burn-in with jagsUI)
-        # nt <- 3
-        # nc <- 4
+# For testing that the model will run: 80 samples, 300 iterations, ~4.5 minutes with 64 gb of RAM
+  na <- 100	   # pre-burnin
+  nb <- 240	 # burn-in
+  ni <- 300   # iterations (including burn-in with jagsUI)
+  nt <- 3
+  nc <- 4
         
-        # 2400 samples, 10k iterations, ~100 minutes
-        # na <- 1000	 # pre-burnin
-        # nb <- 8200	 # burn-in
-        # ni <- 10000  # iterations (including burn-in with jagsUI)
-        # nt <- 3
-        # nc <- 4
-
-      # 12000 samples, 50k iterations, ~400 minutes with 16 gb RAM
-        # na <- 1000	 # pre-burnin
-        # nb <- 41000	 # burn-in
-        # ni <- 50000  # iterations (including burn-in with jagsUI)
-        # nt <- 3
-        # nc <- 4
-        
-      # 16000 samples, 60k iterations, ~250 minutes on 64 gb RAM
-        # na <- 1000	 # pre-burnin
-        # nb <- 48000	 # burn-in
-        # ni <- 60000  # iterations (including burn-in with jagsUI)
-        # nt <- 3
-        # nc <- 4
-      
-      # 24000 samples across four chains, 80k iterations, ~330 minutes on 64 gb RAM
-      # DELETE. No better than the 16k
-        # na <- 1000	 # pre-burnin
-        # nb <- 62000	 # burn-in
-        # ni <- 80000  # iterations (including burn-in with jagsUI)
-        # nt <- 3
-        # nc <- 4
-        
-      # 40000 samples across four chains, 82.5k iterations, ~ minutes on 64 gb RAM
-        na <- 1000	 # pre-burnin
-        nb <- 60000	 # burn-in
-        ni <- 90000  # iterations (including burn-in with jagsUI)
-        nt <- 3
-        nc <- 4
-        # This does it! All parameters are converging
+# 40000 samples across four chains, 82.5k iterations, ~ minutes on 64 gb RAM
+  # na <- 1000	 # pre-burnin
+  # nb <- 60000	 # burn-in
+  # ni <- 90000  # iterations (including burn-in with jagsUI)
+  # nt <- 3
+  # nc <- 4
+  # # This does it! All parameters are converging
         
       # 3600 samples, 5k iterations
         # na <- 1000	   # pre-burnin
@@ -229,6 +180,7 @@ set.seed(54321) # for consistent 'initial' values
 (start.time <- Sys.time())
 out <- jags(bdata, inits, parameters.to.save = c(
         # community-level intercepts and covariate effects
+          "beta0.comm",
           "beta.comm",
           "rho.comm",
           "tau.beta.comm",
@@ -240,6 +192,7 @@ out <- jags(bdata, inits, parameters.to.save = c(
           "delta.traits",
           # "eff.order",
         # species-level intercept and covariate effects
+          "beta0.species",
           "beta.species",
           "rho.species",
         # Autoregression terms
@@ -329,9 +282,9 @@ set.seed(54321)
       # str(bdata <- list(
       #   y = ysum.model,    # total # of detections per site/species/season
       #   K = K.model,      # a matrix of # of survey occasions per site/season
-      #   psi.cov = a.cov.occ,           # occupancy covariates, including '1' for the intercept
+      #   cov.psi = a.cov.occ,           # occupancy covariates, including '1' for the intercept
       #   ncov.occ = dim(a.cov.occ)[3],  # number of occupancy covariates, including the intercept
-      #   rho.cov = a.cov.det,           # detection covariates, including '1' for the intercept
+      #   cov.rho = a.cov.det,           # detection covariates, including '1' for the intercept
       #   ncov.det = dim(a.cov.det)[3],  # number of detection covariates, including the intercept
       #   traits = traits.response,      # response-trait covariates
       #   n.traits = dim(traits.response)[2],

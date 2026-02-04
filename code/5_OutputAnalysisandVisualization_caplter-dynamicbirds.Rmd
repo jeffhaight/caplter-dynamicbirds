@@ -20,7 +20,8 @@ gc()
 
 ```{r packages, message = FALSE, echo = TRUE, warning = FALSE}
   library(tidyverse)
-  library(beepr)  # for notifying you when some code is  done running
+  library(beepr)  # for notifying you when some code is  done running 
+  library(abind)
 
 # for statistical modeling
   library(performance)  # for checking model performance (multicollinearity, VIF, overdispersion, etc.)
@@ -29,11 +30,9 @@ gc()
   library(glmmTMB)
   library(lmerTest)     # for getting p-values out of the lmer models
   library(MuMIn)        # for calculating R^2, among other things
-  library(vegan)        # for multivariate community analyses
   # library(rjags)
   library(jagsUI)       # for running Bayesian models in JAGS
   library(mgcv)         # for GAM(M)s
-  library(itsadug)      # for GAMM plotting
 
 # for plotting
 # library(ggplot2)      # should already be in the 'tidyverse'
@@ -45,9 +44,10 @@ gc()
   library(RColorBrewer)
   library(ggridges)
   library(scales)
+  library(viridis)
 ```
 
-# Import Data
+# Import Model Input Data
 ```{r import model input data, include = FALSE}
 list.files("~/GitHub/caplter-dynamicbirds/data/input")
 
@@ -62,11 +62,13 @@ data.spp <- data.spp %>% filter(code %in% dimnames(ysum.model)[[2]])
 ```
 
 
-### Community occupancy model results
+### Import ommunity occupancy model results
 As with many Bayesian occupancy models, the data files needed to contain them are too large to share via GitHub. These files can be reproduced by running the code in the file _4_CommunityOccupancyModel_caplter-dynamicbirds.Rmd_ and can be made available upon request to the corresponding author (Jeffrey Haight, jdhaight.eco@gmail.com). Parameters in the 'msum' object are also shared as a supplementary dataset _DatasetS1_summarytable_occupancymodelparameters.xlsx_
 ```{r import model results}
 tmp <- readRDS("G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_40ksamp.rds")
-msum <- read.csv("G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output_summary/MSOM_CAPbirds_spring_summary40ksamp.csv")
+msum <- read.csv("G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_summary40ksamp.csv")
+# tmp <- readRDS("D:/GitHub/caplter-dynamicbirds/data/output/MSOM_CAPbirds_spring_40ksamp.rds")
+# msum <- read.csv("D:/GitHub/caplter-dynamicbirds/data/output/MSOM_CAPbirds_spring_summary40ksamp.csv")
 
 
 # For illustrative/plotting purposes, we may want to take a subset of samples, to save on processing
@@ -91,24 +93,21 @@ apply(tmp$delta.traits, c(2,3), quantile, probs = c(0.05, 0.5, 0.95))
 # Which are the largest species?
 data.spp %>% arrange(desc(Mass))
 ```
-*With land surface temperature was used as a covariate (and unknown species were included):*
-Substantial environmental effects at the community level, except for the urbanization X temperature interaction (except there was for certain species).
-Temperature: positive, with a _positive_ interaction
-Larger species: rarer, more negatively affected by urbanization, temperature, 
-Higher HWI: none
-Diet specialization: none
-
-*With daily minimum air temperature was the occupancy covariate (and unknown species were excluded):*
-All environmental effects were substantial at the community-level, though not quite the vegetation interaction (f = 0.930)
-Temperature: positive, but with a _negative_ interaction
-Larger species: rarer (f = 0.934), more negatively affected by temperature and by urbanization at hotter sites, more positively affected by vegetation 
-Higher HWI: none
-Diet specialization: none
-
-*With the random effect of year accounted for:*
-Larger species: rarer (f = 0.919), more negatively affected by temperature (f = 0.909) and by urbanization at hotter sites, more positively affected by vegetation 
-
-
+*With daily minimum air temperature was the occupancy covariate, a separate occupancy intercept for t = 1, the random effect of year accounted for, and unknown species excluded):*
+All environmental effects were substantial at the community-level, though not quite the vegetation interaction (f = 0.943)
+Temperature: positive, but with a very _negative_ interaction
+Vegetation: positive with a _negative_ interaction, but only a 94.3% probability
+Larger species: rarer (f = 0.993), negatively related to temperature (f = 0.946), more negatively affected by urbanization at hotter sites (f = 0.976), and more positively related to vegetation (f = 0.963)
+Higher HWI: none (f ~= 0.50 for all)
+Diet specialization: none (f ~= 0.50 for all)
+```{r transform intercepts to occupancy probabilities}
+# it should be more informative to present occupancy probabilities
+# rather than the logit-scale intercepts beta0 and beta1
+msum %>% as.data.frame() %>% 
+  filter(X %in% c("beta0.comm", "beta.comm[1]")) %>% # filter the two intercept parameters 
+  select(mean, X25., X97.5.) %>% as.matrix() %>%
+  plogis() %>% round(2) # inverse logit transform and round
+```
 
 
 # Review Effects & Create Response Groups
@@ -239,42 +238,89 @@ m.effects.sum <- m.effects.sum %>%
   arrange(Hand.Wing.Index) %>% mutate(order_HWI = as.factor(1:nrow(m.effects.sum))) %>%
   arrange(dietdiv) %>% mutate(order_dietdiv = as.factor(1:nrow(m.effects.sum)))
 ```
+```{r}
+fstat <- data.frame(rbind(
+    # msum %>% as.data.frame() %>%
+    # filter(grepl('beta0.species', X)),
+    msum %>% #as.data.frame() %>%
+    filter(grepl('beta.species', X))
+  )
+) %>%
+  mutate(
+    # "fstat" = f,
+    "over0" = overlap0,
+    "spp" = rep((m.effects.sum %>% arrange(spp) %>% pull(spp)), each = 6),
+    "common_name" = rep((m.effects.sum %>% arrange(spp) %>% pull(common_name)), each = 6),
+    "parameter" = c(rep(c("intercept", "urb", "temp", "tempint", "veg", "vegint"), n.spp))
+  ) %>% 
+  select(c(spp, parameter, f, over0)) %>% 
+  # group_by(spp) %>%
+  filter(!parameter %in% c("intercept.init", "intercept")) %>%
+  pivot_wider(names_from = parameter, values_from = c(f, over0)) 
+
+fstat %>% 
+  filter(spp %in% c(
+    "LUWA"
+    )
+  ) #%>% filter(f >= 0.975)
+
+
+fstat %>% filter(f_urb >= 0.95) %>% pull(spp)
+
+m.effects.sum <- left_join(m.effects.sum, fstat)
+
+```
+
 
 ```{r list species by substantial effects and traits}
 
 # Urbanization relationships
   # which species had positive relationships with impervious surface
-  spp.urb.positive <- m.effects.sum %>% # filter(low95_effect_urb > 0) %>%
-        filter(low90_effect_urb > 0) %>% pull(common_name) %>% sort()  # mostly introduced and/or common species
-  spp.urb.negative <- m.effects.sum %>% # filter(upp95_effect_urb < 0) %>% 
-    filter(upp90_effect_urb < 0) %>% pull(common_name) %>% sort() 
-  spp.urb.neutral <- m.effects.sum %>% filter(!common_name %in% c(spp.urb.positive, spp.urb.negative)) %>% 
-    pull(common_name) %>% sort() 
+  spp.urb.positive <- m.effects.sum %>% # filter(low90_effect_urb > 0) %>% filter(low95_effect_urb > 0) %>% 
+      filter(f_urb >= 0.95) %>% filter(mean_effect_urb > 0) %>%
+      pull(common_name) %>% sort()  # mostly introduced and/or common species
+  spp.urb.negative <- m.effects.sum %>% # filter(upp90_effect_urb < 0) %>% # filter(upp95_effect_urb < 0) %>%
+      filter(f_urb >= 0.95) %>% filter(mean_effect_urb < 0) %>%
+      pull(common_name) %>% sort() 
+  spp.urb.neutral <- m.effects.sum %>% 
+      filter(!common_name %in% c(spp.urb.positive, spp.urb.negative)) %>% 
+      pull(common_name) %>% sort() 
+  
+
+# Temperature relationships
+  # negative relationships? 
+  spp.temp.negative <- m.effects.sum  %>% #filter(upp90_effect_temp < 0) %>% #filter(upp95_effect_temp < 0) %>% 
+      filter(f_temp >= 0.95) %>% filter(mean_effect_temp < 0) %>%
+      pull(common_name) %>% sort()  # only a couple have outright negative relationships with temperature
+  spp.tempint.negative <- m.effects.sum %>% #filter(upp90_effect_tempint < 0) %>% # filter(upp95_effect_tempint < 0) %>% 
+      filter(f_tempint >= 0.95) %>% filter(mean_effect_tempint < 0) %>%
+      pull(common_name) %>% sort()  # several have negative urbanization interactions with temperature
+  
+  # positive relationships?
+  spp.temp.positive <- m.effects.sum  %>% #filter(low90_effect_temp > 0) %>% # filter(low95_effect_temp > 0) %>% 
+      filter(f_temp >= 0.95) %>% filter(mean_effect_temp > 0) %>%
+      pull(common_name) %>% sort()  # a signficant number of desert species here
+  spp.tempint.positive <- m.effects.sum  %>% #filter(low90_effect_tempint > 0) %>% #filter(low95_effect_tempint > 0) %>% 
+      filter(f_tempint >= 0.95) %>% filter(mean_effect_tempint > 0) %>%
+    pull(common_name) %>% sort()
+  
   
 # Vegetation relationships
   # negative relationships? 
-  spp.veg.negative <- m.effects.sum %>% #filter(upp95_effect_veg < 0) %>%
-    filter(upp90_effect_veg < 0)  %>% pull(common_name) %>% sort()
-  spp.vegint.negative <- m.effects.sum %>% #filter(upp95_effect_vegint < 0) %>% 
-    filter(upp90_effect_vegint < 0)%>% pull(common_name) %>% sort()
+  spp.veg.negative <- m.effects.sum %>% # filter(upp90_effect_veg < 0)  %>% #filter(upp95_effect_veg < 0) %>%
+      filter(f_veg >= 0.95) %>% filter(mean_effect_veg < 0) %>%
+      pull(common_name) %>% sort()
+  spp.vegint.negative <- m.effects.sum %>% #filter(upp90_effect_vegint < 0) %>% #filter(upp95_effect_vegint < 0) %>%
+      filter(f_vegint >= 0.95) %>% filter(mean_effect_vegint < 0) %>%
+      pull(common_name) %>% sort()
   # positive relationships
-  spp.veg.positive <- m.effects.sum %>% #filter(low95_effect_veg > 0) %>% 
-      filter(low90_effect_veg > 0) %>% pull(common_name) %>% sort()  # includes a number of waterbirds
-  spp.vegint.positive <- m.effects.sum %>% #filter(low95_effect_vegint > 0) %>% 
-      filter(low90_effect_vegint > 0) %>% pull(common_name) %>% sort() # includes species with both positive *and* negative 
+  spp.veg.positive <- m.effects.sum %>%  #filter(low90_effect_veg > 0) %>% #filter(low95_effect_veg > 0) %>%
+      filter(f_veg >= 0.95) %>% filter(mean_effect_veg > 0) %>%
+      pull(common_name) %>% sort()  # includes a number of waterbirds
+  spp.vegint.positive <- m.effects.sum %>% #filter(low90_effect_vegint > 0) %>% #filter(low95_effect_vegint > 0) %>% 
+      filter(f_vegint >= 0.95) %>% filter(mean_effect_vegint > 0) %>%
+      pull(common_name) %>% sort() # includes species with both positive *and* negative 
   
-# Temperature relationships
-  # negative relationships? 
-  spp.temp.negative <- m.effects.sum  %>% #filter(upp95_effect_temp < 0) %>% 
-      filter(upp90_effect_temp < 0) %>% pull(common_name) %>% sort()  # only a couple have outright negative relationships with temperature
-  spp.tempint.negative <- m.effects.sum %>% #filter(upp95_effect_tempint < 0) %>% 
-      filter(upp90_effect_tempint < 0) %>% pull(common_name) %>% sort()  # several have negative urbanization interactions with temperature
-  
-  # positive relationships?
-  spp.temp.positive <- m.effects.sum  %>% # filter(low95_effect_temp > 0) %>% 
-    filter(low90_effect_temp > 0) %>% pull(common_name) %>% sort()  # a signficant number of desert species here
-  spp.tempint.positive <- m.effects.sum  %>% #filter(low95_effect_tempint > 0) %>% 
-    filter(low90_effect_tempint > 0) %>% pull(common_name) %>% sort()
 
 # species not strongly affected by anything
   # these are species whose presence is not highly sensitive to the environmental conditions we included
@@ -305,25 +351,25 @@ m.effects.sum$effect_veg <- as.character(m.effects.sum$effect_veg)
 m.effects.sum$effect_vegint <- as.character(m.effects.sum$effect_vegint)
 
 # effect_urb, effect_temp, effect_tempint, effect_veg, effect_vegint
-m.effects.sum[which(m.effects.sum$common_name %in% spp.urb.negative),]$effect_urb <- "Avoider"
-m.effects.sum[which(!m.effects.sum$common_name %in% c(spp.urb.negative, spp.urb.positive)),]$effect_urb <- "Neutral"
-m.effects.sum[which(m.effects.sum$common_name %in% spp.urb.positive),]$effect_urb <- "Adapter"
+m.effects.sum[which(m.effects.sum$common_name %in% spp.urb.negative),]$effect_urb <- "1_Avoider"
+m.effects.sum[which(!m.effects.sum$common_name %in% c(spp.urb.negative, spp.urb.positive)),]$effect_urb <- "2_Uncertain"
+m.effects.sum[which(m.effects.sum$common_name %in% spp.urb.positive),]$effect_urb <- "3_Adapter"
 
-m.effects.sum[which(m.effects.sum$common_name %in% spp.temp.negative),]$effect_temp <- "Negative"
-m.effects.sum[which(!m.effects.sum$common_name %in% c(spp.temp.negative, spp.temp.positive)),]$effect_temp <- "Neutral"
-m.effects.sum[which(m.effects.sum$common_name %in% spp.temp.positive),]$effect_temp <- "Positive"
+m.effects.sum[which(m.effects.sum$common_name %in% spp.temp.negative),]$effect_temp <- "1_Negative"
+m.effects.sum[which(!m.effects.sum$common_name %in% c(spp.temp.negative, spp.temp.positive)),]$effect_temp <- "2_Uncertain"
+m.effects.sum[which(m.effects.sum$common_name %in% spp.temp.positive),]$effect_temp <- "3_Positive"
 
-m.effects.sum[which(m.effects.sum$common_name %in% spp.tempint.negative),]$effect_tempint <- "Negative"
-m.effects.sum[which(!m.effects.sum$common_name %in% c(spp.tempint.negative, spp.tempint.positive)),]$effect_tempint <- "Neutral"
-m.effects.sum[which(m.effects.sum$common_name %in% spp.tempint.positive),]$effect_tempint <- "Positive"
+m.effects.sum[which(m.effects.sum$common_name %in% spp.tempint.negative),]$effect_tempint <- "1_Negative"
+m.effects.sum[which(!m.effects.sum$common_name %in% c(spp.tempint.negative, spp.tempint.positive)),]$effect_tempint <- "2_Uncertain"
+m.effects.sum[which(m.effects.sum$common_name %in% spp.tempint.positive),]$effect_tempint <- "3_Positive"
 
-m.effects.sum[which(m.effects.sum$common_name %in% spp.veg.negative),]$effect_veg <- "Negative"
-m.effects.sum[which(!m.effects.sum$common_name %in% c(spp.veg.negative, spp.veg.positive)),]$effect_veg <- "Neutral"
-m.effects.sum[which(m.effects.sum$common_name %in% spp.veg.positive),]$effect_veg <- "Positive"
+m.effects.sum[which(m.effects.sum$common_name %in% spp.veg.negative),]$effect_veg <- "1_Negative"
+m.effects.sum[which(!m.effects.sum$common_name %in% c(spp.veg.negative, spp.veg.positive)),]$effect_veg <- "2_Uncertain"
+m.effects.sum[which(m.effects.sum$common_name %in% spp.veg.positive),]$effect_veg <- "3_Positive"
 
-m.effects.sum[which(m.effects.sum$common_name %in% spp.vegint.negative),]$effect_vegint <- "Negative"
-m.effects.sum[which(!m.effects.sum$common_name %in% c(spp.vegint.negative, spp.vegint.positive)),]$effect_vegint <- "Neutral"
-m.effects.sum[which(m.effects.sum$common_name %in% spp.vegint.positive),]$effect_vegint <- "Positive"
+m.effects.sum[which(m.effects.sum$common_name %in% spp.vegint.negative),]$effect_vegint <- "1_Negative"
+m.effects.sum[which(!m.effects.sum$common_name %in% c(spp.vegint.negative, spp.vegint.positive)),]$effect_vegint <- "2_Uncertain"
+m.effects.sum[which(m.effects.sum$common_name %in% spp.vegint.positive),]$effect_vegint <- "3_Positive"
 
 # add a number corresponding to a species' order in the model input/output data
 m.effects.sum <- m.effects.sum %>% arrange(spp) %>% mutate(spp_num = 1:length(spp))
@@ -341,19 +387,19 @@ m.effects.sum <- m.effects.sum %>% arrange(spp) %>% mutate(spp_num = 1:length(sp
   m.effects.sum$effect_highertemp <- rep(NA, nrow(m.effects.sum))
   m.effects.sum$effect_lessgreen <- rep(NA, nrow(m.effects.sum))
   
-  m.effects.sum[which(m.effects.sum$effect_tempint == "Negative"),]$effect_highertemp <- "Less urban-associated"
-  # m.effects.sum[which(m.effects.sum$effect_tempint == "Positive"),] # none present
-  m.effects.sum[which(m.effects.sum$effect_temp == "Negative"),]$effect_highertemp <- "Lower overall occupancy"
-  m.effects.sum[which(m.effects.sum$effect_temp == "Positive"),]$effect_highertemp <- "Higher overall occupancy"
+  m.effects.sum[which(m.effects.sum$effect_tempint == "1_Negative"),]$effect_highertemp <- "Less urban"
+  # m.effects.sum[which(m.effects.sum$effect_tempint == "3_Positive"),] # none present
+  m.effects.sum[which(m.effects.sum$effect_temp == "1_Negative"),]$effect_highertemp <- "Lower overall occupancy"
+  m.effects.sum[which(m.effects.sum$effect_temp == "3_Positive"),]$effect_highertemp <- "Higher overall occupancy"
   
-  m.effects.sum[which(m.effects.sum$effect_vegint == "Negative" & m.effects.sum$effect_veg == "Positive"),]$effect_lessgreen <- "More urban-associated, lower overall occupancy"
-  m.effects.sum[which(m.effects.sum$effect_vegint == "Negative" & m.effects.sum$effect_veg == "Neutral"),]$effect_lessgreen <- "More urban-associated"
+  m.effects.sum[which(m.effects.sum$effect_vegint == "1_Negative" & m.effects.sum$effect_veg == "3_Positive"),]$effect_lessgreen <- "More urban, lower overall occupancy"
+  m.effects.sum[which(m.effects.sum$effect_vegint == "1_Negative" & m.effects.sum$effect_veg == "2_Uncertain"),]$effect_lessgreen <- "More urban"
   
-  m.effects.sum[which(m.effects.sum$effect_vegint == "Positive" & m.effects.sum$effect_veg == "Positive"),]$effect_lessgreen <- "Less urban-associated, lower overall occupancy"
-  m.effects.sum[which(m.effects.sum$effect_vegint == "Positive" & m.effects.sum$effect_veg == "Neutral"),]$effect_lessgreen <- "Less urban-associated"
+  m.effects.sum[which(m.effects.sum$effect_vegint == "3_Positive" & m.effects.sum$effect_veg == "3_Positive"),]$effect_lessgreen <- "Less urban, lower overall occupancy"
+  m.effects.sum[which(m.effects.sum$effect_vegint == "3_Positive" & m.effects.sum$effect_veg == "2_Uncertain"),]$effect_lessgreen <- "Less urban"
   
-  m.effects.sum[which(m.effects.sum$effect_vegint == "Neutral" & m.effects.sum$effect_veg == "Positive"),]$effect_lessgreen <- "Lower overall occupancy"
-   m.effects.sum[which(m.effects.sum$effect_vegint == "Neutral" & m.effects.sum$effect_veg == "Negative"),]$effect_lessgreen <- "Higher overall occupancy"
+  m.effects.sum[which(m.effects.sum$effect_vegint == "2_Uncertain" & m.effects.sum$effect_veg == "3_Positive"),]$effect_lessgreen <- "Lower overall occupancy"
+   m.effects.sum[which(m.effects.sum$effect_vegint == "2_Uncertain" & m.effects.sum$effect_veg == "1_Negative"),]$effect_lessgreen <- "Higher overall occupancy"
   
   m.effects.sum %>% select(c(common_name, 
                              effect_urb, effect_temp, effect_tempint, effect_veg, 
@@ -372,19 +418,19 @@ m.effects.sum <- m.effects.sum %>% select(c(
   Mass, Hand.Wing.Index, dietdiv, 
   effect_urb, effect_temp, effect_tempint, effect_veg, effect_vegint, 
   dynamic, effect_highertemp, effect_lessgreen,
-  mean_effect_urb ,median_effect_urb, 
+  mean_effect_urb ,median_effect_urb, f_urb, #over0_urb,
   low95_effect_urb, upp95_effect_urb,
   low90_effect_urb, upp90_effect_urb, 
-  mean_effect_temp, median_effect_temp,
+  mean_effect_temp, median_effect_temp, f_temp, #over0_temp,
   low95_effect_temp, upp95_effect_temp,
   low90_effect_temp, upp90_effect_temp, 
-  mean_effect_tempint, median_effect_tempint ,
+  mean_effect_tempint, median_effect_tempint, f_tempint, #over0_tempint,
   low95_effect_tempint, upp95_effect_tempint,
   low90_effect_tempint, upp90_effect_tempint, 
-  mean_effect_veg, median_effect_veg, 
+  mean_effect_veg, median_effect_veg,  f_veg, #over0_veg,
   low95_effect_veg, upp95_effect_veg,
   low90_effect_veg, upp90_effect_veg,
-  mean_effect_vegint, median_effect_vegint,
+  mean_effect_vegint, median_effect_vegint, f_vegint, #over0_vegint,
   low95_effect_vegint, upp95_effect_vegint,
   low90_effect_vegint, upp90_effect_vegint, 
   mean_theta ,median_theta, 
@@ -397,7 +443,7 @@ m.effects.sum <- m.effects.sum %>% select(c(
 
 # export
 write.csv(m.effects.sum, 
-  "~/Github/caplter-dynamicbirds/data/MSOMoutput_specieseffectsummary.csv", row.names = FALSE)
+  "~/Github/caplter-dynamicbirds/data/output/MSOMoutput_specieseffectsummary.csv", row.names = FALSE)
 
 # m.effects.sum %>% arrange(order_theta)
 ```
@@ -485,7 +531,7 @@ data.spp %>% filter(common_name %in% spp.neutral)
 
 # let's investigate this a bit
 # how many of these are neutral just because they're probably just to rare to establish substantial relationships?
-spp.num.neutral <- which(spp.model %in% (data.spp %>% filter(common_name %in% spp.neutral) %>% pull(code))) # the numbers of the "neutral" species
+spp.num.neutral <- which(spp.model %in% (data.spp %>% filter(common_name %in% spp.neutral) %>% pull(code))) # the numbers of the "2_Uncertain" species
 
 (
   beta.neutral <- data.frame(
@@ -520,7 +566,7 @@ plot.traits <- data.spp %>%
          breaks = log10(c(1, 3, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000)),
          labels = c("1","3", "5", "10", "25","50","100","250", "500", "1000","2500","5000")) +
     labs(x = "Body Mass (kg)", y = "Hand-Wing Index", color = "Diet Diversity\nIndex (H')") +
-    theme(axis.text.x = element_text(face = "bold", angle = -30, vjust = -0.3), 
+    theme(axis.text.x = element_text(face = "bold", angle = -40, vjust = -0.3), 
           axis.text.y = element_text(face = "bold"), 
           # legend.position = "none",
           legend.title = element_text(face = "bold"),
@@ -562,11 +608,11 @@ ggplot(aes(x = as.factor(order_theta), y = median_theta, color = median_theta)) 
     legend.position = "top",
     # axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 14),
     axis.text.y = element_blank(),
-    axis.text.x = element_text(size = 14),
+    axis.text.x = element_text(size = 12),
     axis.title = element_text(face = "bold", size = 16),
     # legend.title = element_text(face = "bold", size = 16),
     legend.title = element_blank(),
-    legend.text = element_text(size = 14)
+    legend.text = element_text(size = 12)
   ) 
 plot.effects
 
@@ -582,7 +628,7 @@ m.effects.sum %>% arrange(order_theta)
     #   geom_density_ridges(alpha = 0.5, color = "transparent") +
     #   scale_y_discrete(labels = m.effects.sum$spp) +
     #   # geom_pointrange(aes(x = median_effect_urb, xmin = low95_effect_urb, xmax = upp95_effect_urb)) +
-    #   labs(x = "Relationship with Urbanization (ENDISI)", y = "Species (Alpha-code)") + 
+    #   labs(x = "Relationship with Urbanization", y = "Species (Alpha-code)") + 
     #   # coord_flip() +
     #   coord_cartesian(xlim = c(-2.5, 2.5))+
     #   # gghighlight(SGCN %in% c("1", "2", "3")) +
@@ -596,29 +642,30 @@ plot.effects <- m.effects.sum %>%
 ggplot(aes(x = as.factor(order_urbeffect), y = median_effect_urb, color = effect_urb)) +
   theme_classic() +
   geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
-  geom_linerange(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb), 
+  geom_linerange(aes(ymin = low95_effect_urb, ymax = upp95_effect_urb), 
                  width = 0.4, size = 0.4, alpha = 1)+
   geom_point(pch = 16, size = 1) + 
-  scale_color_manual(values = c("#E97335","gray50","#1F78B4" ), labels = c("Urban Avoider", "Urban-neutral", "Urban Adapter")) +
+  scale_color_manual(values = c("#E97335","gray50","#1F78B4" ), labels = c("Urban Avoider", "Urban-uncertain", "Urban Adapter")) +
+  # gghighlight(f_urb > 0.95) +
   scale_x_discrete(labels = m.effects.sum$spp) +
-  labs(x = "Species", y = "Relationship with Urbanization (ENDISI)")+
+  labs(x = "Species", y = "Relationship with Urbanization")+
   coord_flip() +
   theme(
     # legend.position = "none",
     legend.position = "top",
     # axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 14),
     axis.text.y = element_blank(),
-    axis.text.x = element_text(size = 14),
-    axis.title = element_text(face = "bold", size = 16),
+    axis.text.x = element_text(size = 12),
+    axis.title = element_text(face = "bold", size = 14),
     # legend.title = element_text(face = "bold", size = 16),
     legend.title = element_blank(),
-    legend.text = element_text(size = 14)
+    legend.text = element_text(face = "bold", size = 12)
   ) 
 plot.effects
 
 ggsave("~/Github/caplter-dynamicbirds/figures/effect_urb.png",
        plot.effects,
-       width = 7,
+       width = 5,
        height = 4,
        units = "in",
        dpi = 300)
@@ -662,7 +709,7 @@ ggplot(aes(x = median_effect_urb, y = median_effect_temp,
   # geom_errorbar(aes(ymin = low90_effect_temp, ymax = upp90_effect_temp), alpha = 1) +
   geom_errorbar(aes(xmin = median_effect_urb+0.5*median_effect_tempint, xmax = median_effect_urb), alpha = 1, color = "gray") +
   geom_point(pch = 21, color = "gray70") +
-  labs(x = "Relationship with Urbanization (ENDISI)", y = "Relationship with Temperature (Daily Minimum)") + 
+  labs(x = "Relationship with Urbanization", y = "Relationship with Temperature") + 
   # gghighlight(SGCN %in% c("1", "2", "3")) +
   # gghighlight(spp %in% c("ANHU")) +
   gghighlight(!common_name %in% c(spp.neutral)) +
@@ -697,7 +744,7 @@ ggplot(aes(x = median_effect_temp, y = median_effect_tempint,
   geom_errorbar(aes(xmin = low90_effect_temp, xmax = upp90_effect_temp), alpha = 0.6) +
   geom_errorbar(aes(ymin = low90_effect_tempint, ymax = upp90_effect_tempint), alpha = 0.6) +
   geom_point(pch = 21, color = "gray70", show.legend = FALSE) +
-  labs(x = "Relationship with Temperature \n(Daily Minimum)", y = "Urbanization-Temperature Interaction", color = "Body Mass \nlog(Kg)") + 
+  labs(x = "Relationship with Temperature", y = "Urbanization-Temperature Interaction", color = "Body Mass \nlog(Kg)") + 
   # gghighlight(SGCN %in% c("1", "2", "3")) +
   # gghighlight(spp %in% c("BETH")) +
   # gghighlight(common_name %in% c(spp.urb.negative, spp.urb.positive,
@@ -725,7 +772,7 @@ ggplot(aes(x = median_effect_urb, y = median_effect_veg,
   geom_errorbar(aes(xmin = low90_effect_urb, xmax = upp90_effect_urb), alpha = 1) +
   geom_errorbar(aes(ymin = low90_effect_veg, ymax = upp90_effect_veg), alpha = 1) +
   geom_point(pch = 21, color = "gray70") +
-  labs(x = "Relationship with Urbanization (ENDISI)", y = "Relationship with Vegetation (NDVI)") + 
+  labs(x = "Relationship with Urbanization", y = "Relationship with Vegetation (NDVI)") + 
   # gghighlight(SGCN %in% c("1", "2", "3")) +
   # gghighlight(spp %in% c("BETH")) +
   # gghighlight(common_name %in% c(#spp.urb.negative, spp.urb.positive,
@@ -745,9 +792,9 @@ plot.effects
 #        dpi = 300)
 ```
 
-### Trait Effects
+### Trait Effects (Figure 3 and Figure S1)
 
-```{r SUP FIGURE urbanization effects by size}
+```{r FIGURE 3 urbanization effects by size}
 plot.effects <- m.effects.sum %>%
 ggplot(aes(x = log10(Mass), y = median_effect_urb, color = log10(Mass), fill = log10(Mass))) +
   theme_classic() +
@@ -757,18 +804,18 @@ ggplot(aes(x = log10(Mass), y = median_effect_urb, color = log10(Mass), fill = l
          labels = c("1","3", "5", "10", "25","50","100","250", "500", "1000","2500","5000")) +
   # coord_cartesian(xlim = c(0.25, 4)) +
   # option A: plain colors
-    geom_errorbar(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb), color = "gray30",
+    geom_errorbar(aes(ymin = low95_effect_urb, ymax = upp95_effect_urb), color = "gray30",
                   alpha = 1, linewidth = 0.12, width = 0) +
     geom_point(pch = 23, size = 1.4, alpha = 1, fill = "gray30", color = "gray30", stroke = 0.1) + 
   # option B: points and bars colored by traits
-    # geom_errorbar(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb), color = "gray50",
+    # geom_errorbar(aes(ymin = low95_effect_urb, ymax = upp95_effect_urb), color = "gray50",
     #               alpha = 1, linewidth = 0.12, width = 0) +
-    # geom_errorbar(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb),
+    # geom_errorbar(aes(ymin = low95_effect_urb, ymax = upp95_effect_urb),
     #               alpha = 1, linewidth = 0.1, width = 0) +
     # geom_point(pch = 23, size = 1.4, alpha = 1, color = "gray50", stroke = 0.1) +   #pch = 21, fill = NA
     # scale_color_viridis_c(option = "plasma", direction = -1, trans = "log10") +
     # scale_fill_viridis_c(option = "plasma", direction = -1, trans = "log10") +   
-  labs(x = "Body Mass (g)", y = "Relationship with Urbanization (ENDISI)") + 
+  labs(x = "Body Mass (g)", y = "Relationship with Urbanization") + 
   # coord_flip() + 
   theme(
     legend.position = "none",
@@ -789,7 +836,7 @@ ggsave("~/Github/caplter-dynamicbirds/figures/effect_urb_size.png",
        units = "in",
        dpi = 300)
 ```
-```{r SUP FIGURE temp effects by body size}
+```{r FIGURE 3 temp effects by body size}
 
 plot.effects <- m.effects.sum %>%
 ggplot(aes(x = median_effect_temp, y = median_effect_tempint, 
@@ -800,14 +847,14 @@ ggplot(aes(x = median_effect_temp, y = median_effect_tempint,
   geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
   geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
   # geom_point(pch = 21, color = "gray30", show.legend = FALSE, size = 1, alpha = 1) +
-  geom_errorbar(aes(xmin = low90_effect_temp, xmax = upp90_effect_temp), color = "gray50",
+  geom_errorbar(aes(xmin = low95_effect_temp, xmax = upp95_effect_temp), color = "gray50",
                 alpha = 1, linewidth = 0.12) +
-  geom_errorbar(aes(ymin = low90_effect_tempint, ymax = upp90_effect_tempint), color = "gray50",
+  geom_errorbar(aes(ymin = low95_effect_tempint, ymax = upp95_effect_tempint), color = "gray50",
                 alpha = 1, linewidth = 0.12) +
-  geom_errorbar(aes(xmin = low90_effect_temp, xmax = upp90_effect_temp), alpha = 1, linewidth = 0.1) +
-  geom_errorbar(aes(ymin = low90_effect_tempint, ymax = upp90_effect_tempint), alpha = 1, linewidth = 0.1) +
+  geom_errorbar(aes(xmin = low95_effect_temp, xmax = upp95_effect_temp), alpha = 1, linewidth = 0.1) +
+  geom_errorbar(aes(ymin = low95_effect_tempint, ymax = upp95_effect_tempint), alpha = 1, linewidth = 0.1) +
   geom_point(pch = 23, , show.legend = FALSE, size = 1.4, alpha = 1, color = "gray50", stroke = 0.1) +
-  labs(x = "Relationship with Temperature", y = "Urbanization-Temperature Interaction", color = "Body Mass \nlog(Kg)") + 
+  labs(x = "Relationship with\nTemperature", y = "Urbanization-Temperature\nInteraction", color = "Body Mass \nlog(Kg)") + 
   coord_cartesian(xlim = c(-1,1), ylim=c(-1,1)) +
   gghighlight(!common_name %in% c(spp.neutral)) +
   theme(
@@ -823,13 +870,13 @@ plot.effects
 
 ggsave("~/Github/caplter-dynamicbirds/figures/effects_TempbySize.png",
        plot.effects,
-       width = 3,
-       height = 3,
+       width = 2.5,
+       height = 2.5,
        units = "in",
        dpi = 300)
 ```
 
-```{r SUP FIGURE veg effects by body size}
+```{r FIGURE 3 veg effects by body size}
 
 plot.effects <- m.effects.sum %>%
 ggplot(aes(x = median_effect_veg, y = median_effect_vegint, 
@@ -840,14 +887,14 @@ ggplot(aes(x = median_effect_veg, y = median_effect_vegint,
   geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
   geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
   # geom_point(pch = 21, color = "gray30", show.legend = FALSE, size = 1, alpha = 1) +
-  geom_errorbar(aes(xmin = low90_effect_veg, xmax = upp90_effect_veg), color = "gray50", 
+  geom_errorbar(aes(xmin = low95_effect_veg, xmax = upp95_effect_veg), color = "gray50", 
                 alpha = 1, linewidth = 0.12) +
-  geom_errorbar(aes(ymin = low90_effect_vegint, ymax = upp90_effect_vegint), color = "gray50", 
+  geom_errorbar(aes(ymin = low95_effect_vegint, ymax = upp95_effect_vegint), color = "gray50", 
                 alpha = 1, linewidth = 0.12) +
-  geom_errorbar(aes(xmin = low90_effect_veg, xmax = upp90_effect_veg), alpha = 1, linewidth = 0.1) +
-  geom_errorbar(aes(ymin = low90_effect_vegint, ymax = upp90_effect_vegint), alpha = 1, linewidth = 0.1) +
+  geom_errorbar(aes(xmin = low95_effect_veg, xmax = upp95_effect_veg), alpha = 1, linewidth = 0.1) +
+  geom_errorbar(aes(ymin = low95_effect_vegint, ymax = upp95_effect_vegint), alpha = 1, linewidth = 0.1) +
   geom_point(pch = 23, , show.legend = FALSE, size = 1.4, alpha = 0.8, color = "gray50", stroke = 0.1) +
-  labs(x = "Relationship with Vegetation", y = "Urbanization-Vegetation Interaction", color = "Body Mass \nlog(Kg)") + 
+  labs(x = "Relationship with\nVegetation", y = "Urbanization-Vegetation\nInteraction", color = "Body Mass \nlog(Kg)") + 
   coord_cartesian(xlim = c(-1,1), ylim=c(-1,1)) +
   gghighlight(!common_name %in% c(spp.neutral)) +
   # gghighlight(common_name %in% c(spp.temp.negative, spp.temp.positive, 
@@ -865,8 +912,8 @@ plot.effects
 
 ggsave("~/Github/caplter-dynamicbirds/figures/effects_VegbySize.png",
        plot.effects,
-       width = 3,
-       height = 3,
+       width = 2.5,
+       height = 2.5,
        units = "in",
        dpi = 300)
 ```
@@ -881,12 +928,12 @@ ggplot(aes(x = median_effect_temp, y = median_effect_tempint,
   geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
   geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
   # geom_point(pch = 21, color = "gray30", show.legend = FALSE, size = 1, alpha = 1) +
-  geom_errorbar(aes(xmin = low90_effect_temp, xmax = upp90_effect_temp), color = "gray50",
+  geom_errorbar(aes(xmin = low95_effect_temp, xmax = upp95_effect_temp), color = "gray50",
                 alpha = 1, linewidth = 0.12) +
-  geom_errorbar(aes(ymin = low90_effect_tempint, ymax = upp90_effect_tempint), color = "gray50",
+  geom_errorbar(aes(ymin = low95_effect_tempint, ymax = upp95_effect_tempint), color = "gray50",
                 alpha = 1, linewidth = 0.12) +
-  geom_errorbar(aes(xmin = low90_effect_temp, xmax = upp90_effect_temp), alpha = 1, linewidth = 0.1) +
-  geom_errorbar(aes(ymin = low90_effect_tempint, ymax = upp90_effect_tempint), alpha = 1, linewidth = 0.1) +
+  geom_errorbar(aes(xmin = low95_effect_temp, xmax = upp95_effect_temp), alpha = 1, linewidth = 0.1) +
+  geom_errorbar(aes(ymin = low95_effect_tempint, ymax = upp95_effect_tempint), alpha = 1, linewidth = 0.1) +
   geom_point(pch = 23, , show.legend = FALSE, size = 1.4, alpha = 0.8, color = "gray50", stroke = 0.1) +
   labs(x = "Relationship with Temperature", y = "Urbanization-Temperature Interaction", color = "Diet Diversity Index") + 
   coord_cartesian(xlim = c(-1,1), ylim=c(-1,1)) +
@@ -910,23 +957,23 @@ ggsave("~/Github/caplter-dynamicbirds/figures/effects_TempbyDiet.png",
        dpi = 300)
 ```
 
-```{r SUP FIGURE veg effects by body size}
+```{r SUP FIGURE veg effects by diet}
 
 plot.effects <- m.effects.sum %>%
 ggplot(aes(x = median_effect_veg, y = median_effect_vegint, 
            fill = log(Mass), color = log(Mass))) + #
   theme_classic() +
-  scale_color_viridis_c(option = "plasma", direction = -1) +
-  scale_fill_viridis_c(option = "plasma", direction = -1)+
+  scale_color_viridis_c(option = "viridis", direction = -1) +
+  scale_fill_viridis_c(option = "viridis", direction = -1)+
   geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
   geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
   # geom_point(pch = 21, color = "gray30", show.legend = FALSE, size = 1, alpha = 1) +
-  geom_errorbar(aes(xmin = low90_effect_veg, xmax = upp90_effect_veg), color = "gray50", 
+  geom_errorbar(aes(xmin = low95_effect_veg, xmax = upp95_effect_veg), color = "gray50", 
                 alpha = 1, linewidth = 0.12) +
-  geom_errorbar(aes(ymin = low90_effect_vegint, ymax = upp90_effect_vegint), color = "gray50", 
+  geom_errorbar(aes(ymin = low95_effect_vegint, ymax = upp95_effect_vegint), color = "gray50", 
                 alpha = 1, linewidth = 0.12) +
-  geom_errorbar(aes(xmin = low90_effect_veg, xmax = upp90_effect_veg), alpha = 1, linewidth = 0.1) +
-  geom_errorbar(aes(ymin = low90_effect_vegint, ymax = upp90_effect_vegint), alpha = 1, linewidth = 0.1) +
+  geom_errorbar(aes(xmin = low95_effect_veg, xmax = upp95_effect_veg), alpha = 1, linewidth = 0.1) +
+  geom_errorbar(aes(ymin = low95_effect_vegint, ymax = upp95_effect_vegint), alpha = 1, linewidth = 0.1) +
   geom_point(pch = 23, , show.legend = FALSE, size = 1.4, alpha = 0.8, color = "gray50", stroke = 0.1) +
   labs(x = "Relationship with Vegetation", y = "Urbanization-Vegetation Interaction", color = "Diet Diversity Index") + 
   coord_cartesian(xlim = c(-1,1), ylim=c(-1,1)) +
@@ -962,10 +1009,10 @@ ggplot(aes(x = median_effect_urb, y = median_effect_veg,
   scale_fill_viridis_c(option = "plasma", direction = -1)+
   geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
   geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
-  geom_errorbar(aes(xmin = low90_effect_urb, xmax = upp90_effect_urb), alpha = 0.8) +
-  geom_errorbar(aes(ymin = low90_effect_veg, ymax = upp90_effect_veg), alpha = 0.8) +
+  geom_errorbar(aes(xmin = low95_effect_urb, xmax = upp95_effect_urb), alpha = 0.8) +
+  geom_errorbar(aes(ymin = low95_effect_veg, ymax = upp95_effect_veg), alpha = 0.8) +
   geom_point(pch = 21, color = "gray70", show.legend = FALSE, alpha = 0.8) +
-  labs(x = "Relationship with Urbanization (ENDISI)", y = "Relationship with Vegetation (NDVI)", color = "Body Mass \nlog(Kg)") + 
+  labs(x = "Relationship with Urbanization", y = "Relationship with Vegetation (NDVI)", color = "Body Mass \nlog(Kg)") + 
   coord_cartesian(xlim = c(-2.25,2.25), ylim=c(-1.75,1.75)) +
   theme(
     axis.text.x = element_text(face = "bold", size = 7), 
@@ -1001,16 +1048,16 @@ ggplot(aes(x = median_effect_urb, y = median_effect_temp,
   scale_fill_viridis_c(option = "plasma", direction = -1)+
   geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
   geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
-  geom_errorbar(aes(xmin = low90_effect_urb, xmax = upp90_effect_urb), alpha = 0.6) +
-  geom_errorbar(aes(ymin = low90_effect_temp, ymax = upp90_effect_temp), alpha = 0.6) +
+  geom_errorbar(aes(xmin = low95_effect_urb, xmax = upp95_effect_urb), alpha = 0.6) +
+  geom_errorbar(aes(ymin = low95_effect_temp, ymax = upp95_effect_temp), alpha = 0.6) +
   geom_point(pch = 21, color = "gray70", show.legend = FALSE) +
-  labs(x = "Relationship with Urbanization (ENDISI)", y = "Relationship with Temperature \n(Daily Minimum)", color = "Body Mass \nlog(Kg)") + 
+  labs(x = "Relationship with Urbanization", y = "Relationship with Temperature \n(Daily Minimum)", color = "Body Mass \nlog(Kg)") + 
   # gghighlight(SGCN %in% c("1", "2", "3")) +
   # gghighlight(spp %in% c("BETH")) +
   # gghighlight(common_name %in% c(#spp.urb.negative, spp.urb.positive,
   #                        spp.temp.negative, spp.temp.positive,
   #                        spp.tempint.negative, spp.tempint.positive)) +
-  # gghighlight(spp %in% c(m.effects.sum %>% filter(upp90_effect_urb < 0) %>% pull(spp))) +
+  # gghighlight(spp %in% c(m.effects.sum %>% filter(upp95_effect_urb < 0) %>% pull(spp))) +
   theme(
     # axis.text.x = element_blank()
   )
@@ -1038,16 +1085,16 @@ ggplot(aes(x = median_effect_urb, y = median_effect_tempint,
   scale_fill_viridis_c(option = "plasma", direction = -1)+
   geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
   geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
-  geom_errorbar(aes(xmin = low90_effect_urb, xmax = upp90_effect_urb), alpha = 0.6) +
-  geom_errorbar(aes(ymin = low90_effect_tempint, ymax = upp90_effect_tempint), alpha = 0.6) +
+  geom_errorbar(aes(xmin = low95_effect_urb, xmax = upp95_effect_urb), alpha = 0.6) +
+  geom_errorbar(aes(ymin = low95_effect_tempint, ymax = upp95_effect_tempint), alpha = 0.6) +
   geom_point(pch = 21, color = "gray70") +
-  labs(x = "Relationship with Urbanization (ENDISI)", y = "Temperature Interaction with Urbanization") + 
+  labs(x = "Relationship with Urbanization", y = "Temperature Interaction with Urbanization") + 
   # gghighlight(SGCN %in% c("1", "2", "3")) +
   # gghighlight(spp %in% c("BETH")) +
   gghighlight(common_name %in% c(#spp.urb.negative, spp.urb.positive,
                          spp.temp.negative, spp.temp.positive,
                          spp.tempint.negative, spp.tempint.positive)) +
-  # gghighlight(spp %in% c(m.effects.sum %>% filter(upp90_effect_urb < 0) %>% pull(spp))) +
+  # gghighlight(spp %in% c(m.effects.sum %>% filter(upp95_effect_urb < 0) %>% pull(spp))) +
   theme(
     # axis.text.x = element_blank()
   )
@@ -1062,17 +1109,17 @@ ggplot(aes(x = median_effect_urb, y = median_effect_tempint,
   scale_fill_viridis_c(option = "plasma", direction = -1)+
   geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
   geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
-  geom_errorbar(aes(xmin = low90_effect_urb, xmax = upp90_effect_urb), alpha = 1) +
-  geom_errorbar(aes(ymin = low90_effect_tempint, ymax = upp90_effect_tempint), alpha = 1) +
+  geom_errorbar(aes(xmin = low95_effect_urb, xmax = upp95_effect_urb), alpha = 1) +
+  geom_errorbar(aes(ymin = low95_effect_tempint, ymax = upp95_effect_tempint), alpha = 1) +
   geom_point(pch = 21, color = "gray70", show.legend = FALSE) +
-  labs(x = "Relationship with Urbanization (ENDISI)", y = "Temperature Interaction with Urbanization", color = "Body Mass \nlog(Kg)") + 
+  labs(x = "Relationship with Urbanization", y = "Temperature Interaction with Urbanization", color = "Body Mass \nlog(Kg)") + 
   # gghighlight(SGCN %in% c("1", "2", "3")) +
   # gghighlight(spp %in% c("BETH")) +
   # gghighlight(common_name %in% c(
   #                        # spp.urb.negative, spp.urb.positive,
   #                        # spp.temp.negative, spp.temp.positive,
   #                        spp.tempint.negative, spp.tempint.positive)) +
-  # gghighlight(spp %in% c(m.effects.sum %>% filter(upp90_effect_urb < 0) %>% pull(spp))) +
+  # gghighlight(spp %in% c(m.effects.sum %>% filter(upp95_effect_urb < 0) %>% pull(spp))) +
   theme(
     # axis.text.x = element_blank()
   )
@@ -1098,12 +1145,12 @@ ggplot(aes(x = as.factor(order_urbeffect), y = median_effect_urb, color = as.fac
   theme_classic() +
   scale_x_discrete(labels = m.effects.sum$spp) +
   geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
-  geom_pointrange(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb)) +
-  labs(x = "Species", y = "Relationship with Urbanization (ENDISI)", color = "SGCN \nTier") + 
+  geom_pointrange(aes(ymin = low95_effect_urb, ymax = upp95_effect_urb)) +
+  labs(x = "Species", y = "Relationship with Urbanization", color = "SGCN \nTier") + 
   gghighlight(SGCN %in% c("1", "2", "3")) +
   # gghighlight(spp %in% c("BETH")) +
-  # gghighlight(spp %in% c(m.effects.sum %>% filter(low90_effect_urb > 0) %>% pull(spp))) +
-  # gghighlight(spp %in% c(m.effects.sum %>% filter(upp90_effect_urb < 0) %>% pull(spp))) +
+  # gghighlight(spp %in% c(m.effects.sum %>% filter(low95_effect_urb > 0) %>% pull(spp))) +
+  # gghighlight(spp %in% c(m.effects.sum %>% filter(upp95_effect_urb < 0) %>% pull(spp))) +
   theme(
     axis.text.x = element_blank()
   )
@@ -1116,23 +1163,23 @@ ggplot(aes(x = as.factor(order_urbeffect), y = median_effect_urb, color = as.fac
 #   geom_density(alpha = 0.3, color = "transparent", color = "gray10") +
 #   scale_y_discrete(labels = m.effects.sum$spp) +
 #   #geom_pointrange(aes(x = median, xmin = low95, xmax = upp95)) +
-#   labs(x = "Relationship with Urbanization (ENDISI)", y = "Density") + 
+#   labs(x = "Relationship with Urbanization", y = "Density") + 
 #   # coord_flip() +
 #   # gghighlight(SGCN %in% c("1", "2", "3")) +
-#   gghighlight(low90_effect_urb > 0) +
+#   gghighlight(low95_effect_urb > 0) +
 #   theme()
 
 plot.effects <- m.effects.sum %>%
 ggplot(aes(x = as.factor(order_urbeffect), y = median_effect_urb, color = as.factor(SGCN))) +
   theme_classic() +
   geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
-  geom_linerange(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb), 
+  geom_linerange(aes(ymin = low95_effect_urb, ymax = upp90_effect_urb), 
                  width = 0.4, size = 0.4, alpha = 1)+
   geom_point(pch = 16, size = 1) +   #pch = 21, fill = NA
   # geom_pointrange(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb)) +
   # scale_color_manual(values = brewer.pal(8,"Set2")[c(2,6,1)]) +
   scale_x_discrete(labels = m.effects.sum$spp) +
-  labs(x = "Species", y = "Relationship with Urbanization (ENDISI)", color = "SGCN \nTier") + 
+  labs(x = "Species", y = "Relationship with Urbanization", color = "SGCN \nTier") + 
   gghighlight(SGCN %in% c("1", "2", "3")) +
   # gghighlight(spp %in% c(#"GAQU", "CACW", "ANHU", "COHU", "GTGR"
   #                        "BBWD")) +
@@ -1202,7 +1249,7 @@ ggplot(aes(x = median_effect_urb, y = median_effect_temp, color = as.factor(SGCN
   geom_point() +
   geom_errorbar(aes(xmin = low90_effect_urb, xmax = upp90_effect_urb), alpha = 0.2) +
   geom_errorbar(aes(ymin = low90_effect_temp, ymax = upp90_effect_temp), alpha = 0.2) +
-  labs(x = "Relationship with Urbanization (ENDISI)", y = "Relationship with Temperature (Daily Minimum)") + 
+  labs(x = "Relationship with Urbanization", y = "Relationship with Temperature (Daily Minimum)") + 
   # gghighlight(SGCN %in% c("1", "2", "3")) +
   # gghighlight(spp %in% c("BETH")) +
   gghighlight(common_name %in% c(spp.urb.negative, spp.urb.positive,
@@ -1239,7 +1286,7 @@ ggplot(aes(x = median_effect_urb, y = median_effect_veg, color = as.factor(SGCN)
   geom_point() +
   geom_errorbar(aes(xmin = low90_effect_urb, xmax = upp90_effect_urb), alpha = 0.2) +
   geom_errorbar(aes(ymin = low90_effect_veg, ymax = upp90_effect_veg), alpha = 0.2) +
-  labs(x = "Relationship with Urbanization (ENDISI)", y = "Relationship with Vegetation (NDVI)") + 
+  labs(x = "Relationship with Urbanization", y = "Relationship with Vegetation (NDVI)") + 
   # gghighlight(SGCN %in% c("1", "2", "3")) +
   # gghighlight(spp %in% c("BETH")) +
   gghighlight(common_name %in% c(spp.urb.negative, spp.urb.positive,
@@ -1256,13 +1303,13 @@ ggplot(aes(x = median_effect_urb, y = median_effect_veg, color = as.factor(SGCN)
 
 
 
-# Plot Predicted Values
+# PREDICTION-BASED PLOTS
 ```{r prep for urbanization gradient predictions}
 # for illustrative purposes, one might want to use a smaller number of posterior samples
 set.seed(54321)
-nsamp <- nrow(tmp[[1]])/4     
-samp <- sample(1:nrow(tmp[[1]]), size = nsamp, replace = FALSE)
-# samp <- 1:nrow(tmp[[1]])
+nsamp <- nrow(tmp[[2]])/4     
+samp <- sample(1:nrow(tmp[[2]]), size = nsamp, replace = FALSE)
+# samp <- 1:nrow(tmp[[2]])
 
 # To more effectively highlight the statistical effects modeled in the model, we will predict effects across a range of hypothetical local urbanization values, under contrasting ranges of temperature/vegetation.
 # For each interacting variable, we will hold any other variable(s) constant at their mean (zero)
@@ -1331,7 +1378,7 @@ For instance, what is the predicte difference in occupancy between the least and
         
         preds.psi <- plogis(mcmc.beta %*% t(dm.urb))  # predict
         
-        preds.psi.cri <- apply(preds.psi, 2, quantile, probs = c(0.05,0.5,0.95)) %>% t() %>% data.frame()
+        preds.psi.cri <- apply(preds.psi, 2, quantile, probs = c(0.025,0.5,0.975)) %>% t() %>% data.frame()
         
         preds.psi.mean[(r*npred-npred+1):(r*npred)] <- apply(preds.psi, c(2), function(x)   mean(x, na.rm=TRUE))    # posterior mean
         preds.psi.lowCI[(r*npred-npred+1):(r*npred)] <- preds.psi.cri[,1]
@@ -1373,7 +1420,7 @@ env.model %>% pull(temp_min) %>% sd()    # 1 sd in variation
 
 # how many temperature levels to predict across
 pred.TEMP <- c(
-            (15.90144-mean(spr$temp_min))/sd(env.model$temp_min), # 12.77778 C = 55 F
+            (15.90144-mean(env.model$temp_min))/sd(env.model$temp_min), # 12.77778 C = 55 F
             (18.3333-mean(env.model$temp_min))/sd(env.model$temp_min)  # 18.3333 C = 65 F)
 )
                 # roughly the range of temperatures from 2000-2022
@@ -1402,7 +1449,7 @@ pred.TEMP <- c(
         
         preds.psi <- plogis(mcmc.beta %*% t(dm.urb))  # predict
         
-        preds.psi.cri <- apply(preds.psi, 2, quantile, probs = c(0.05,0.5,0.95)) %>% t() %>% data.frame()
+        preds.psi.cri <- apply(preds.psi, 2, quantile, probs = c(0.025,0.5,0.975)) %>% t() %>% data.frame()
         
         preds.psi.mean[(r*npred-npred+1):(r*npred)] <- apply(preds.psi, c(2), function(x)   mean(x, na.rm=TRUE))    # posterior mean
         preds.psi.lowCI[(r*npred-npred+1):(r*npred)] <- preds.psi.cri[,1]
@@ -1416,7 +1463,7 @@ pred.TEMP <- c(
       data.pred.TEMP <- data.frame(
         "impervious" = rep(seq(min(env.model$ENDISIadj), max(env.model$ENDISIadj), length.out = npred), nline),
         "impervious_std" = rep(urban.pred, nline),
-        "level" = rep(c("","low", "high", ""), each = npred),
+        "level" = rep(c("low", "high"), each = npred),
         #"LST" = rep(env.model$LST, each = npred),
         # "LST" = rep((pred.TEMP*sd(env.model$LST)+mean(env.model$LST)), each = npred),
         "temp_min" = rep((pred.TEMP*sd(env.model$temp_min)+mean(env.model$temp_min)), each = npred),
@@ -1438,7 +1485,7 @@ pred.TEMP <- c(
         # scale_y_continuous(labels = label_number(accuracy = 0.1)) +
         scale_linetype_manual(values = c(2, 1)) +
         coord_cartesian(ylim=c(0,0.05))+
-        labs(x = "Urbanization \n(ENDISI)", y = "Occupancy", title = "") + #, title = "Community-average"
+        labs(x = "Urbanization", y = "Occupancy", title = "") + #, title = "Community-average"
         theme(axis.text.x = element_text(face = "bold", size = 7), 
               axis.text.y = element_text(face = "bold", size = 7), 
               axis.title.x = element_text(face = "bold", size = 9), 
@@ -1448,7 +1495,7 @@ pred.TEMP <- c(
       print(plot.tempint)
 ```
 
-
+### Temperature Effects: Community-level
 ```{r urb predictions at two temperatures - community}
 sd(env.spr$temp_min) # roughly 1 degree
 mean(env.spr$temp_min)+1
@@ -1487,7 +1534,7 @@ pred.TEMP <- c(
         
         preds.psi <- plogis(mcmc.beta %*% t(dm.urb))  # predict
         
-        preds.psi.cri <- apply(preds.psi, 2, quantile, probs = c(0.05,0.5,0.95)) %>% t() %>% data.frame()
+        preds.psi.cri <- apply(preds.psi, 2, quantile, probs = c(0.025,0.5,0.975)) %>% t() %>% data.frame()
         
         preds.psi.mean[(r*npred-npred+1):(r*npred)] <- apply(preds.psi, c(2), function(x)   mean(x, na.rm=TRUE))    # posterior mean
         preds.psi.lowCI[(r*npred-npred+1):(r*npred)] <- preds.psi.cri[,1]
@@ -1533,7 +1580,7 @@ pred.TEMP <- c(
         # scale_y_continuous(labels = label_number(accuracy = 0.1)) +
         scale_linetype_manual(values = c(2, 1)) +
         # coord_cartesian(ylim=c(0,0.05))+
-        labs(x = "Urbanization \n(ENDISI)", y = "Occupancy", title = "") + #, title = "Community-average"
+        labs(x = "Urbanization", y = "Occupancy", title = "") + #, title = "Community-average"
         theme(axis.text.x = element_text(face = "bold", size = 7), 
               axis.text.y = element_text(face = "bold", size = 7), 
               axis.title.x = element_text(face = "bold", size = 9), 
@@ -1545,12 +1592,12 @@ pred.TEMP <- c(
       ggsave("~/Github/caplter-dynamicbirds/figures/preds_urbXtemp/commpred_urb_temp.png",
        plot.tempint,
        width = 2,
-       height = 2,
+       height = 1.75,
        units = "in",
        dpi = 300)
 ```
 
-
+### Vegetation Effects: Community-level
 ```{r urb predictions at two NDVI levels - community}
 pred.VEG <- c(
   ((mean(env.spr$NDVI)-1*sd(env.spr$NDVI))-mean(env.spr$NDVI))/sd(env.spr$NDVI),
@@ -1590,7 +1637,7 @@ for(r in 1:nline){
         
         preds.psi <- plogis(mcmc.beta %*% t(dm.urb))  # predict
         
-        preds.psi.cri <- apply(preds.psi, 2, quantile, probs = c(0.05,0.5,0.95)) %>% t() %>% data.frame()
+        preds.psi.cri <- apply(preds.psi, 2, quantile, probs = c(0.025,0.5,0.975)) %>% t() %>% data.frame()
         
         preds.psi.mean[(r*npred-npred+1):(r*npred)] <- apply(preds.psi, c(2), function(x)   mean(x, na.rm=TRUE))    # posterior mean
         preds.psi.lowCI[(r*npred-npred+1):(r*npred)] <- preds.psi.cri[,1]
@@ -1626,7 +1673,7 @@ for(r in 1:nline){
         scale_y_continuous(labels = label_number(accuracy = 0.01)) +
         scale_linetype_manual(values = c(2, 1)) +
         coord_cartesian(ylim=c(0,0.05))+
-        labs(x = "Urbanization \n(ENDISI)", y = "Occupancy", title = "") + 
+        labs(x = "Urbanization", y = "Occupancy", title = "") + 
         theme(axis.text.x = element_text(face = "bold", size = 7), 
               axis.text.y = element_text(face = "bold", size = 7), 
               axis.title.x = element_text(face = "bold", size = 9), 
@@ -1638,7 +1685,7 @@ for(r in 1:nline){
       ggsave("~/Github/caplter-dynamicbirds/figures/preds_urbXveg/commpred_urb_veg.png",
        plot.vegint,
        width = 2,
-       height = 2,
+       height = 1.75,
        units = "in",
        dpi = 300)
       
@@ -1659,7 +1706,7 @@ for(r in 1:nline){
       (0.005588851-0.005744220)/0.005744220*100 # 3% decrease with +1SD
 ```
 
-
+### Temperature Effects: Species-level
 ```{r urb predictions at two temperatures - species}
 # how many temperature levels to predict across
 pred.TEMP <- c(
@@ -1773,7 +1820,7 @@ plot.tempint <- data.pred.TEMP %>%
       scale_y_continuous(labels = label_number(accuracy = 0.01)) +
       scale_linetype_manual(values = c(2, 1)) +
       coord_cartesian(ylim=c(0,1))+
-      labs(x = "Urbanization \n(ENDISI)", y = "Occupancy", title = "") +
+      labs(x = "Urbanization", y = "Occupancy", title = "") +
       theme(axis.text.x = element_text(face = "bold", size = 14), 
             axis.text.y = element_text(face = "bold", size = 14), 
             axis.title.x = element_text(face = "bold", size = 18), 
@@ -1799,7 +1846,7 @@ data.pred.TEMP %>%
       scale_y_continuous(labels = label_number(accuracy = 0.01)) +
       scale_linetype_manual(values = c(2, 1)) +
       coord_cartesian(ylim=c(0,1))+
-      labs(x = "Urbanization \n(ENDISI)", y = "Occupancy", title = "") +
+      labs(x = "Urbanization", y = "Occupancy", title = "") +
       theme(axis.text.x = element_text(face = "bold", size = 14), 
             axis.text.y = element_text(face = "bold", size = 14), 
             axis.title.x = element_text(face = "bold", size = 18), 
@@ -1808,8 +1855,8 @@ data.pred.TEMP %>%
             legend.margin = margin(t = 5, r = 74, b = 5, l = 5, unit = "pt") )
 ```
 
-```{r plot temperature predictions for individual temp sensitive species}
-
+```{r FIGURE plot temperature predictions for individual temp sensitive species}
+# if you want to plot fo
 spp.plot <- c(
   "RWBL",
   "BCNH",
@@ -1854,7 +1901,7 @@ for(s in 1:length(spp.plot)){
       scale_y_continuous(labels = label_number(accuracy = 0.01)) +
       scale_linetype_manual(values = c(2, 1)) +
       # coord_cartesian(ylim=c(0,1))+
-      labs(x = "Urbanization \n(ENDISI)", y = "Occupancy", title = spp.name) +
+      labs(x = "Urbanization", y = "Occupancy", title = spp.name) +
       theme(axis.text.x = element_text(face = "bold", size = 7), 
             axis.text.y = element_text(face = "bold", size = 7), 
             axis.title.x = element_text(face = "bold", size = 9), 
@@ -1867,12 +1914,12 @@ for(s in 1:length(spp.plot)){
     ggsave(paste(paste("~/Github/caplter-dynamicbirds/figures/preds_urbXtemp/spppred_urb_temp_", spp.plot[s], sep = ""), ".png", sep = ""),
      plot.tempint,
      width = 2,
-     height = 2,
+     height = 1.75,
      units = "in",
      dpi = 300)
 }
 ```
-
+### Vegetation Effects: Species-level
 ```{r urb predictions at two NDVI levels - species}
 # how many NDVI levels to predict across
     plot(env.spr$ENDISIadj, env.spr$NDVI)
@@ -1973,7 +2020,7 @@ data.pred.VEG.list <- list()
 data.pred.VEG <- do.call(bind_rows, data.pred.VEG.list)
       
 ```
-```{r plot veg predictions for veg sensitive species}
+```{r FIGURE plot veg predictions for veg sensitive species}
 spp.plot <- data.spp%>% 
   # filter(common_name %in% c(
   #   # spp.urb.negative
@@ -2003,7 +2050,7 @@ for(s in 1:length(spp.plot)){
         scale_y_continuous(labels = label_number(accuracy = 0.01)) +
         scale_linetype_manual(values = c(2, 1)) +
         # coord_cartesian(ylim=c(0,1))+
-        labs(x = "Urbanization \n(ENDISI)", y = "Occupancy", title = spp.name) +
+        labs(x = "Urbanization", y = "Occupancy", title = spp.name) +
         theme(axis.text.x = element_text(face = "bold", size = 7), 
               axis.text.y = element_text(face = "bold", size = 7), 
               axis.title.x = element_text(face = "bold", size = 9), 
@@ -2017,14 +2064,338 @@ for(s in 1:length(spp.plot)){
       ggsave(paste(paste("~/Github/caplter-dynamicbirds/figures/preds_urbXveg/spppred_urb_veg_", spp.plot[s], sep = ""), ".png", sep = ""),
        plot.vegint,
        width = 2,
-       height = 2,
+       height = 1.75,
+       units = "in",
+       dpi = 300)
+}
+```
+### Temperature and Vegetation Effects: Idealized Species (Figure 3c)
+```{r design matrices of spp traits}
+    # data.spp %>% arrange(dietdiv) %>% select(name, logmass, dietdiv)
+  
+  # sequences of hypothetical trait values, non-standardized
+    range(data.spp$Mass)
+    range(data.spp$MassLog)
+    quantile(data.spp$Mass, probs = c(0, 0.05, 0.10, 0.50, 0.90, 0.95, 1.00))
+    quantile(data.spp$MassLog, probs = c(0, 0.05, 0.10, 0.50, 0.90, 0.95, 1.00))
+    # 5th percentile = 6.78 grams = roughly the size of a Verdin
+    # 10th percentile = 9.12 grams = roughly the size of several warbler species
+    # 50th percentile = 42.60 grams = roughly the size of a cardinal or a towhee
+    # 90th percentile = 854.50 grams = roughly the size of a mallard or Harris' hawk
+    # 95th percentile = 1367.37 grams = roughly the size of a great horned owl and other raptors/waterbirds
+    
+    plot.bm <- c(
+      # log(6.78), 
+      # log(9.12),
+      # log(42.60),
+      # log(854.50)
+      log(10),
+      log(50),
+      log(1000)
+      # log(1367.37)
+      )
+    
+
+    
+    #plot.bm <- c(min(data.spp$logmass), mean(data.spp$logmass), max(data.spp$logmass))
+    #plot.di <- c(min(data.spp$dietdiv), mean(data.spp$dietdiv), max(data.spp$dietdiv))
+    
+    # standardize the sequences of hypothetical trait values, 
+    nspec.pred <- length(plot.bm)
+    (seq.bm <- (plot.bm - mean(data.spp$MassLog)/sd(data.spp$MassLog)))
+    
+    # create a design matrix based on the equations: 1 = intercept, seq. = trait values to predict off of
+    dm.bm <- cbind(
+      1, 
+      seq.bm, 
+      0,
+      0
+      )      
+    rownames(dm.bm) <- c("small", "medium", "large")
+```
+```{r matrices with trait effects}
+# Grab the appropriate intercept (community-average) and slope parameters for the species traits
+
+    str(tmp$beta.comm)
+    str(tmp$delta.traits)
+    
+    beta.plus.traits <- abind(tmp$beta.comm, tmp$delta.traits)
+    
+    str(beta.plus.traits)
+
+    # psi
+    # beta.psi.int <- cbind(tmp$mu.lpsi, tmp$dint.psi.trait1, tmp$dint.psi.trait2)
+    # beta.psi.urb <- cbind(tmp$mu.beta1.psi, tmp$deff1.psi.trait1, tmp$deff1.psi.trait2)
+    # beta.psi.urbquad <- cbind(tmp$mu.beta2.psi, tmp$deff2.psi.trait1, tmp$deff2.psi.trait2)
+    # beta.psi.pdiv <- cbind(tmp$mu.beta3.psi, tmp$deff3.psi.trait1, tmp$deff3.psi.trait2)
+    # beta.psi.veg <- cbind(tmp$mu.beta4.psi, tmp$deff4.psi.trait1, tmp$deff4.psi.trait2)
+
+# predict intercept and slopes based on idealized traits
+    str(beta.plus.traits[,1,])
+beta.plus.traits[1,1,]
+t(dm.bm)
+
+beta.bm <- abind(
+            (beta.plus.traits[,1,] %*% t(dm.bm)),  # effects of the traits on the intercept  
+            (beta.plus.traits[,2,] %*% t(dm.bm)),
+            (beta.plus.traits[,3,] %*% t(dm.bm)),
+            (beta.plus.traits[,4,] %*% t(dm.bm)),
+            (beta.plus.traits[,5,] %*% t(dm.bm)),
+            (beta.plus.traits[,6,] %*% t(dm.bm)),
+            along = 3)
+
+
+# take a look at an example
+  str(beta.bm)
+  # beta.bm[1,,]  # one sample of predicted betas for each trait level
+  
+  # community-mean effects
+  beta.plus.traits %>% apply(MARGIN = c(2,3), mean)
+    # col 1 = community-average intercept and slopes
+    # col 2+3 = effects of each trait on each intercept and slope
+
+# logit-scale intercept and slopes of species with three trait levels (small medium large)
+  beta.bm %>% apply(MARGIN = c(2,3), mean)   
+  # vs. the community-means
+  tmp$beta.comm %>% apply(MARGIN = c(2), mean)
+```
+
+
+```{r urb predictions at two temperatures - idealized sizes}
+# how many temperature levels to predict across
+pred.TEMP <- c(
+  # (12.77778-mean(env.spr$temp_min))/sd(env.spr$temp_min), # 12.77778 C = 55
+  (14.90144-mean(env.spr$temp_min))/sd(env.spr$temp_min), # mean minus 1 C
+  (16.90144-mean(env.spr$temp_min))/sd(env.spr$temp_min)#, # mean plus 1 C
+  # (18.3333-mean(env.spr$temp_min))/sd(env.spr$temp_min)  # 18.3333 C = 65 F
+                )
+                # roughly the range of temperatures from 2000-2022
+
+# objects for storing prediction summary stats
+    nline <- length(pred.TEMP)
+    preds.psi.mean <- rep(NA, npred*nline)
+    preds.psi.med <- rep(NA, npred*nline)
+    preds.psi.lowCI <- rep(NA, npred*nline)
+    preds.psi.uppCI <- rep(NA, npred*nline)   
+
+
+spp.plot <- c("small", "medium", "large")
+
+data.pred.TEMP.list <- list()
+
+   for (s in 1:length(spp.plot)){
+    # spp.name <- data.spp$common_name[which(data.spp$code == spp.plot[s])]
+    spp.name <- spp.plot[s]
+        # mcmc.beta <- tmp$beta.species[samp,, which(dimnames(ysum.model)[[2]] == spp.plot[s])]
+        mcmc.beta <- beta.bm[samp,s,]# %>% str()
+        # predict across NDVI gradient
+      for(r in 1:nline){  
+        
+        dm.urb <- cbind(
+          1,
+          urban.pred,  # urbanization
+          pred.TEMP[r], #pred.TEMP[r],  # Temperature
+          pred.TEMP[r]*urban.pred, #pred.TEMP[r]*urban.pred,  # MAT*urbanization
+          0, # pred.VEG[r],  # NDVI
+          0# pred.VEG[r]*urban.pred  # NDVI*urbanization
+        )
+        
+        preds.psi <- plogis(mcmc.beta %*% t(dm.urb))  # predict
+        
+        preds.psi.cri <- apply(preds.psi, 2, quantile, probs = c(0.05,0.5,0.95)) %>% t() %>% data.frame()
+        
+        preds.psi.mean[(r*npred-npred+1):(r*npred)] <- apply(preds.psi, c(2), function(x)   mean(x, na.rm=TRUE))    # posterior mean
+        preds.psi.lowCI[(r*npred-npred+1):(r*npred)] <- preds.psi.cri[,1]
+        preds.psi.med[(r*npred-npred+1):(r*npred)] <- preds.psi.cri[,2]
+        preds.psi.uppCI[(r*npred-npred+1):(r*npred)] <- preds.psi.cri[,3]
+        
+        
+      }
+          
+          
+      data.pred.TEMP.list[[s]] <- data.frame(
+        "spp" = rep(spp.name, npred*nline),
+        "impervious" = rep(seq(min(env.spr$ENDISIadj), max(env.spr$ENDISIadj), length.out = npred), nline),
+        "impervious_std" = rep(urban.pred, nline),
+        "level" = rep(c("low", "high"), each = npred),
+        "temp_min" = rep((pred.TEMP*sd(env.spr$temp_min)+mean(env.spr$temp_min)), each = npred),
+        "psi_med" = preds.psi.med,
+        "psi_lowCI" = preds.psi.lowCI,
+        "psi_uppCI" = preds.psi.uppCI
+      )    
+      
+      # print(s)
+   }  
+
+
+data.pred.TEMP <- do.call(bind_rows, data.pred.TEMP.list)
+
+
+
+
+```
+
+
+```{r plot temperature effects by size, warning = FALSE}
+
+spp.plot <- unique(data.pred.TEMP$spp)
+
+
+for(s in 1:length(spp.plot)){
+  spp.name <- spp.plot[s]
+     
+     plot.tempint <- data.pred.TEMP %>% 
+       filter(spp == spp.name) %>%
+       ggplot(aes(x = impervious, y = psi_med, group = level)) +
+      theme_classic() + 
+       geom_smooth(aes(x = impervious, y = psi_med, group = level, color = temp_min, linetype = as.factor(temp_min)),
+                   method = "gam", se = FALSE)+
+      geom_ribbon(aes(x = impervious, y = psi_med, group = level, ymin = psi_lowCI, ymax = psi_uppCI, fill = temp_min), 
+                  alpha = 0.4) + 
+      scale_fill_distiller(palette = "RdYlBu", direction = -1)+
+      scale_color_distiller(palette = "RdYlBu", direction = -1)+
+      scale_y_continuous(labels = label_number(accuracy = 0.01)) +
+      scale_linetype_manual(values = c(2, 1)) +
+      coord_cartesian(ylim=c(0,0.125))+
+      labs(x = "Urbanization", y = "Occupancy") + #, title = spp.name
+      theme(axis.text.x = element_text(face = "bold", size = 7), 
+            axis.text.y = element_text(face = "bold", size = 7), 
+            axis.title.x = element_text(face = "bold", size = 9), 
+            axis.title.y = element_text(face = "bold", size = 9),
+            title = element_text(size = 7),
+            legend.position = "none",
+            legend.margin = margin(t = 5, r = 74, b = 5, l = 5, unit = "pt") ) 
+    print(plot.tempint)
+    
+    ggsave(paste(paste("~/Github/caplter-dynamicbirds/figures/preds_urbXtemp/spppred_idealized_urbtemp_", spp.plot[s], sep = ""), ".png", sep = ""),
+     plot.tempint,
+     width = 1.7,
+     height = 1.7,
+     units = "in",
+     dpi = 300)
+}
+```
+```{r urb predictions at two NDVI levels - idealized sizes}
+# how many NDVI levels to predict across
+    plot(env.spr$ENDISIadj, env.spr$NDVI)
+    # at the moderately high urbanization sites, NDVI doesn't ever get above 0.3
+    # the NDVI of the most urbanized sites is between 0 and 0.1
+    
+pred.VEG <- c(
+  ((mean(env.spr$NDVI)-1*sd(env.spr$NDVI))-mean(env.spr$NDVI))/sd(env.spr$NDVI),
+  # 0,
+  ((mean(env.spr$NDVI)+1*sd(env.spr$NDVI))-mean(env.spr$NDVI))/sd(env.spr$NDVI)
+  )
+  # +/- 1 SD is roughly the same as using the 10th and 90th percentile values for 2001 to 2016
+  # 0.1177186 and 0.252297 vs. 0.1155820 and 0.2587979
+              # env.spr %>% pull(NDVI) %>% quantile(probs = c(0.1, 0.9))
+
+
+# objects for storing prediction summary stats
+    nline <- length(pred.VEG)
+    preds.psi.mean <- rep(NA, npred*nline)
+    preds.psi.med <- rep(NA, npred*nline)
+    preds.psi.lowCI <- rep(NA, npred*nline)
+    preds.psi.uppCI <- rep(NA, npred*nline)   
+
+
+spp.plot <- c("small", "medium", "large")
+
+data.pred.VEG.list <- list()
+
+   for (s in 1:length(spp.plot)){
+    # spp.name <- data.spp$common_name[which(data.spp$code == spp.plot[s])]
+    spp.name <- spp.plot[s]
+        # mcmc.beta <- tmp$beta.species[samp,, which(dimnames(ysum.model)[[2]] == spp.plot[s])]
+        mcmc.beta <- beta.bm[samp,s,]# %>% str()
+        # predict across NDVI gradient
+      for(r in 1:nline){ 
+        # a design matrix
+        dm.urb <- cbind(
+          1,
+          urban.pred,  # urbanization
+          0, #pred.TEMP[r],  # Temperature
+          0, #pred.TEMP[r]*urb.pred,  # Temp*urbanization
+          pred.VEG[r],  # Vegetation
+          pred.VEG[r]*urban.pred  # Veg*urbanization
+        )
+        
+        # mcmc.beta <- tmp$beta.comm
+        
+        preds.psi <- plogis(mcmc.beta %*% t(dm.urb))  # predict
+        
+        preds.psi.cri <- apply(preds.psi, 2, quantile, probs = c(0.025,0.5,0.975)) %>% t() %>% data.frame()
+        
+        preds.psi.mean[(r*npred-npred+1):(r*npred)] <- apply(preds.psi, c(2), function(x)   mean(x, na.rm=TRUE))    # posterior mean
+        preds.psi.lowCI[(r*npred-npred+1):(r*npred)] <- preds.psi.cri[,1]
+        preds.psi.med[(r*npred-npred+1):(r*npred)] <- preds.psi.cri[,2]
+        preds.psi.uppCI[(r*npred-npred+1):(r*npred)] <- preds.psi.cri[,3]
+        
+      }
+          
+          
+      data.pred.VEG.list[[s]] <- data.frame(
+        "spp" = rep(spp.name, npred*nline),
+        "impervious" = rep(seq(min(env.model$ENDISIadj), max(env.model$ENDISIadj), length.out = npred), nline),
+        "impervious_std" = rep(urban.pred, nline),
+        "level" = rep(c("low", "high"), each = npred),
+        #"NDVI" = rep(env.model$NDVI, each = npred),
+        "NDVI" = rep((pred.VEG*sd(env.model$NDVI)+mean(env.model$NDVI)), each = npred),
+        "psi_med" = preds.psi.med,
+        "psi_mean" = preds.psi.mean,
+        "psi_lowCI" = preds.psi.lowCI,
+        "psi_uppCI" = preds.psi.uppCI
+      )    
+      
+      
+      # print(s)
+       
+ }
+
+data.pred.VEG <- do.call(bind_rows, data.pred.VEG.list)
+      
+```
+```{r plot veg predictions by size}
+
+spp.plot <- unique(data.pred.VEG$spp)
+
+for(s in 1:length(spp.plot)){
+   spp.name <- spp.plot[s]
+     
+     plot.vegint <- data.pred.VEG %>% 
+       filter(spp == spp.name) %>%
+         ggplot(aes(x = impervious, y = psi_med, group = level)) +
+        theme_classic() + 
+        geom_smooth(aes(x = impervious, y = psi_med, group = level, color = NDVI, linetype = as.factor(NDVI)),
+                     method = "gam",  se = FALSE)+
+        geom_ribbon(aes(x = impervious, y = psi_med, group = level, ymin = psi_lowCI, ymax = psi_uppCI, fill = NDVI), 
+                    alpha = 0.4) + 
+        scale_fill_distiller(palette = "BrBG", direction = 1)+
+        scale_color_distiller(palette = "BrBG", direction = 1)+
+        scale_y_continuous(labels = label_number(accuracy = 0.01)) +
+        scale_linetype_manual(values = c(2, 1)) +
+        coord_cartesian(ylim=c(0,0.085))+
+        labs(x = "Urbanization", y = "Occupancy") + # , title = spp.name
+        theme(axis.text.x = element_text(face = "bold", size = 7), 
+              axis.text.y = element_text(face = "bold", size = 7), 
+              axis.title.x = element_text(face = "bold", size = 9), 
+              axis.title.y = element_text(face = "bold", size = 9),
+              title = element_text(size = 7), 
+              legend.position = "none",
+              legend.margin = margin(t = 5, r = 74, b = 5, l = 5, unit = "pt") ) 
+      # print(plot.vegint)
+      # range(data.plot$EVI)
+      
+      ggsave(paste(paste("~/Github/caplter-dynamicbirds/figures/preds_urbXveg/spppred_idealized_urbveg_", spp.plot[s], sep = ""), ".png", sep = ""),
+       plot.vegint,
+       width = 1.7,
+       height = 1.7,
        units = "in",
        dpi = 300)
 }
 ```
 
-
-# Urbanization, Temperature, and Vegetation Trends
+# FIGURE 1a: Urbanization, Temperature, and Vegetation Trends
 ```{r urbanization trend}
 #
 kruskal.test(ENDISIadj ~ survey_year, data = (env.model %>% filter(season == "2_spring")))
@@ -2058,26 +2429,26 @@ gam(ENDISIadj ~ survey_year, data = (env.model %>% filter(season == "2_spring"))
 
 (plot.trend <- env.model %>% filter(!season == "annual") %>% 
     filter(season %in% c("2_spring")) %>%
-    ggplot(aes(x = survey_year, y = ENDISIadj, group = season, color = season)) +
-    geom_point(alpha = 0.1, shape = 16, position = position_dodge(width = 0.6), color = "purple3") +
-    geom_smooth(method = "gam", se = FALSE, color = "purple3") +
-    # scale_color_brewer(palette = "Dark2") +
+    ggplot(aes(x = survey_year, y = ENDISIadj, group = season)) +
+    geom_point(aes(color = ENDISIadj), alpha = 0.4, shape = 16, position = position_dodge(width = 0.6)) +
+    scale_color_viridis(option = "inferno") +
+    geom_smooth(method = "gam", se = FALSE, color = "gray40", linewidth = 0.5) +
     #scale_color_manual(values = pal_season) +
-    # coord_cartesian(ylim = c(0.05, 0.45)) +
+    coord_cartesian(ylim = c(-0.65, 0)) +
     scale_y_continuous(labels = label_number(accuracy = 0.01)) +
     # stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
     # stat_cor(method = "pearson", cor.coef.name = "r", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
     labs(x = "Year", y = "Urbanization\n(ENDISI)") +
     theme_bw()+
     theme(
-        # legend.position = "none",
+        legend.position = "none",
         axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 8),
         axis.text.y = element_text(size = 8),
         axis.title = element_text(face = "bold", size = 8)
     ))
 
 
-ggsave("~/Github/caplter-dynamicbirds/figures/trends_env/env_ENDISIadj_birdsites_01to16.png",
+ggsave("~/Github/caplter-dynamicbirds/figures/appendix/env_ENDISIadj_birdsites_01to16.png",
        plot.trend,
        width = 2,
        height = 2,
@@ -2126,8 +2497,9 @@ gam(temp_min ~ survey_year, data = (env.model %>% filter(season == "2_spring")))
 (plot.trend <- env.model  %>% filter(!season == "annual") %>% 
      filter(season %in% c("2_spring")) %>%
      ggplot(aes(x = survey_year, y = temp_min, group = season)) +
-     geom_point(alpha = 0.1, shape = 16, position = position_dodge(width = 0.6), color = "red3") +
-     geom_smooth(method = "gam", se = FALSE, color = "red3") +
+     geom_point(aes(color = temp_min), alpha = 0.6, shape = 16, position = position_dodge(width = 0.6)) +
+    scale_color_distiller(palette = "Spectral") +
+     geom_smooth(method = "gam", se = FALSE, color = "gray40", linewidth = 0.5) +
      # scale_color_brewer(palette = "Dark2") +
      #scale_color_manual(values = pal_season) +
      scale_y_continuous(labels = label_number(accuracy = 0.1)) +
@@ -2136,14 +2508,14 @@ gam(temp_min ~ survey_year, data = (env.model %>% filter(season == "2_spring")))
      labs(x = "Year", y = "Daily Minimum Air \nTemperature (°C)") +
      theme_bw()+
      theme(
-         # legend.position = "none",
+         legend.position = "none",
          axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 8),
          axis.text.y = element_text(size = 8),
          axis.title = element_text(face = "bold", size = 8)
      ))
 
 
-ggsave("~/Github/caplter-dynamicbirds/figures/trends_env/env_tempmin_birdsites_01to16.png",
+ggsave("~/Github/caplter-dynamicbirds/figures/appendix/env_tempmin_birdsites_01to16.png",
        plot.trend,
        width = 2,
        height = 2,
@@ -2187,10 +2559,10 @@ gam(NDVI ~ survey_year, data = (env.model %>% filter(season == "2_spring"))) %>%
 
 (plot.trend <- env.model %>% filter(!season == "annual") %>% 
     filter(season %in% c("2_spring")) %>%
-    ggplot(aes(x = survey_year, y = NDVI, group = season, color = season)) +
-    geom_point(alpha = 0.1, shape = 16, position = position_dodge(width = 0.6), color = "green3") +
-    geom_smooth(method = "gam", se = FALSE, color = "green3") +
-    # scale_color_brewer(palette = "Dark2") +
+    ggplot(aes(x = survey_year, y = NDVI, group = season)) +
+    geom_point(aes(color = NDVI), alpha = 0.5, shape = 16, position = position_dodge(width = 0.6)) +
+    scale_color_viridis(option = "viridis") +
+     geom_smooth(method = "gam", se = TRUE, color = "gray40", linewidth = 0.5) +
     #scale_color_manual(values = pal_season) +
     # coord_cartesian(ylim = c(0.05, 0.45)) +
     scale_y_continuous(labels = label_number(accuracy = 0.01)) +
@@ -2199,13 +2571,13 @@ gam(NDVI ~ survey_year, data = (env.model %>% filter(season == "2_spring"))) %>%
     labs(x = "Year", y = "Vegetation\n(NDVI)") +
     theme_bw()+
     theme(
-        # legend.position = "none",
+        legend.position = "none",
         axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 8),
         axis.text.y = element_text(size = 8),
         axis.title = element_text(face = "bold", size = 8)
     ))
 
-ggsave("~/Github/caplter-dynamicbirds/figures/trends_env/env_NDVI_birdsites_01to16.png",
+ggsave("~/Github/caplter-dynamicbirds/figures/appendix/env_NDVI_birdsites_01to16.png",
        plot.trend,
        width = 2,
        height = 2,
@@ -2228,7 +2600,7 @@ ggplot(aes(x = as.factor(order_urbeffect), y = median_effect_urb, color = congru
   # geom_pointrange(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb)) +
   scale_x_discrete(labels = m.effects.sum$spp) +
   scale_color_viridis_c(option = "viridis", direction = 1) +
-  labs(x = "Species", y = "Relationship with Impervious \nSurface (ENDISI)", color = "Regional \nPopularity") + 
+  labs(x = "Species", y = "Relationship with\nImpervious Surface", color = "Regional \nPopularity") + 
   # gghighlight(SGCN %in% c("1", "2", "3")) +
   # gghighlight(spp %in% c("BETH")) +
   # gghighlight(spp %in% c(m.effects.sum %>% filter(low90_effect_urb > 0) %>% pull(spp))) +
@@ -2261,7 +2633,7 @@ ggplot(aes(x = as.factor(order_urbeffect), y = median_effect_urb, color = as.fac
   # geom_pointrange(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb)) +
   scale_x_discrete(labels = m.effects.sum$spp) +
   # scale_color_viridis_c(option = "viridis", direction = 1) +
-  labs(x = "Species", y = "Relationship with Impervious \nSurface (ENDISI)", 
+  labs(x = "Species", y = "Relationship with\nImpervious Surface", 
        color = "Cultural \nNiche") + 
   gghighlight(cultural_niche %in% c("Celebrity", "Friend", "Neighbor", "Stranger")) +
   theme(
@@ -2301,7 +2673,7 @@ ggplot(aes(x = median_effect_urb, y = median_effect_temp, color = as.factor(cult
   geom_point() +
   geom_errorbar(aes(xmin = low90_effect_urb, xmax = upp90_effect_urb), alpha = 0.2) +
   geom_errorbar(aes(ymin = low90_effect_temp, ymax = upp90_effect_temp), alpha = 0.2) +
-  labs(x = "Relationship with Urbanization (ENDISI)", y = "Relationship with Temperature \n(Daily Minimum)") + 
+  labs(x = "Relationship with Urbanization", y = "Relationship with Temperature \n(Daily Minimum)") + 
   # gghighlight(SGCN %in% c("1", "2", "3")) +
   # gghighlight(spp %in% c("BETH")) +
   gghighlight(common_name %in% c(spp.urb.negative, spp.urb.positive#,
@@ -2324,7 +2696,7 @@ ggplot(aes(x = median_effect_urb, y = median_effect_temp, fill = popularity, col
   geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
   geom_errorbar(aes(xmin = low90_effect_urb, xmax = upp90_effect_urb), alpha = 1) +
   geom_errorbar(aes(ymin = low90_effect_temp, ymax = upp90_effect_temp), alpha = 1) +
-  labs(x = "Relationship with Urbanization (ENDISI)", y = "Relationship with Temperature \n(Daily Minimum)") + 
+  labs(x = "Relationship with Urbanization", y = "Relationship with Temperature \n(Daily Minimum)") + 
   geom_point(pch = 21) +
   # gghighlight(SGCN %in% c("1", "2", "3")) +
   # gghighlight(spp %in% c("BETH")) +

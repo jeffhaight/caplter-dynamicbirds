@@ -124,24 +124,36 @@ Use the full count dataset to filter by years and sites included in this particu
     group_by(season, code) %>% mutate(det_season = sum(det_survey)) %>% ungroup() %>% arrange(code)
 
 
-# Create lists of species
-  # 63 species were only ever observed once across the whole project
-  obs %>% filter(det_project <= 1) %>% pull(code) %>% unique() %>% length()
-  # but our analysis is by-season, so we should keep only species observed more than once in any given season
-  
-  # 111 species were only observed once across all winter surveys
-  obs %>% filter(season == "1_winter") %>% filter(det_season <= 1) %>% pull(code) %>% unique() %>% length()
-  # 102 species were only observed once across all spring surveys
-  obs %>% filter(season == "2_spring") %>% filter(det_season <= 1) %>% pull(code) %>% unique() %>% length()
-  
-obs %>% filter(season == "2_spring") %>% filter(det_season > 1) %>% pull(code) %>% unique()
-
-
-  # Create lists of identified species (all species and excluding rare species) vs. unidentified species
+# Create lists of identified species (all species and excluding rare species) vs. unidentified species
   spp.known <- obs %>% filter(!grepl("Unidentified", common_name)) %>% pull(code) %>% unique()
   spp.unknown <- obs %>% filter(grepl("Unidentified", common_name)) %>% pull(code) %>% unique()
   
-  # list the species that we would potentially be modeling the occupancy of
+# Count the species
+    # 63 species were only ever observed once across the whole project
+  obs %>% filter(det_project <= 1) %>% pull(code) %>% unique() %>% length()
+  # but our analysis is by-season, so we should keep only species observed more than once in any given season
+  
+  # Across all winter surveys:
+      # 165 non-domestic species were only observed once
+      obs %>% filter(season == "1_winter") %>% 
+        filter(!code %in% c("DODU", "DOGO", "ISCA", "CHGO")) %>% filter(code %in% spp.known) %>%
+        filter(det_season >= 1) %>% pull(code) %>% unique() %>% length()
+      # 130 species were observed at least twice
+      obs %>% filter(season == "1_winter") %>%
+        filter(!code %in% c("DODU", "DOGO", "ISCA", "CHGO")) %>% filter(code %in% spp.known) %>%
+         filter(det_season >= 2) %>% pull(code) %>% unique() %>% length()
+  # Across all spring surveys:
+      # 170 species were observed at least once
+      obs %>% filter(season == "2_spring") %>%
+        filter(!code %in% c("DODU", "DOGO", "ISCA", "CHGO")) %>% filter(code %in% spp.known) %>%
+         filter(det_season >= 1) %>% pull(code) %>% unique() %>% length()
+      # 139 were observed at least twice
+      obs %>% filter(season == "2_spring") %>%
+        filter(!code %in% c("DODU", "DOGO", "ISCA", "CHGO")) %>% filter(code %in% spp.known) %>%
+         filter(det_season >= 2) %>% pull(code) %>% unique() %>% length()
+
+  
+# List the species that we would potentially be modeling the occupancy of
   # we would only want to analyze the non-domestic, known species that were actually detected more than once
   spp.winter <- obs %>% group_by(code)  %>%  filter(det_survey > 0) %>%
     filter(season == "1_winter") %>%  filter(det_season > 1) %>%
