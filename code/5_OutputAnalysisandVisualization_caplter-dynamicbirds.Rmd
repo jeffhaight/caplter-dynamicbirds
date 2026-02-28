@@ -62,7 +62,7 @@ data.spp <- data.spp %>% filter(code %in% dimnames(ysum.model)[[2]])
 ```
 
 
-### Import ommunity occupancy model results
+### Import Community occupancy model results
 As with many Bayesian occupancy models, the data files needed to contain them are too large to share via GitHub. These files can be reproduced by running the code in the file _4_CommunityOccupancyModel_caplter-dynamicbirds.Rmd_ and can be made available upon request to the corresponding author (Jeffrey Haight, jdhaight.eco@gmail.com). Parameters in the 'msum' object are also shared as a supplementary dataset _DatasetS1_summarytable_occupancymodelparameters.xlsx_
 ```{r import model results}
 tmp <- readRDS("G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/output/MSOM_CAPbirds_spring_40ksamp.rds")
@@ -77,6 +77,7 @@ msum <- read.csv("G:/Shared drives/CAP USE Postdoc/projects/DynamicBirds/data/ou
     samp <- sample(1:nrow(tmp$beta.comm), size = nsamp, replace = FALSE)
 
 ```
+
 ```{r review model results}
 
 msum %>% as.data.frame() %>% filter(Rhat < 1.05)
@@ -382,6 +383,11 @@ m.effects.sum <- m.effects.sum %>% arrange(spp) %>% mutate(spp_num = 1:length(sp
     spp.veg.negative, spp.veg.positive, spp.vegint.negative, spp.vegint.positive
     )),]$dynamic <- "Y"
   m.effects.sum$dynamic[which(m.effects.sum$dynamic != "Y")] <- "N"
+  
+# similarly, summarize whether a species was 'sensitive' at all (including urbanization)
+  m.effects.sum$sensitive <- m.effects.sum$dynamic
+  m.effects.sum[which(m.effects.sum$common_name %in% c(spp.urb.negative, spp.urb.positive
+    )),]$sensitive <- "Y"
 
 # finally, the tricky part: describing the predicted effects of higher temperature and drier conditions (less green vegetation)
   m.effects.sum$effect_highertemp <- rep(NA, nrow(m.effects.sum))
@@ -417,7 +423,7 @@ m.effects.sum <- m.effects.sum %>% select(c(
   SGCN, ESA, MEXFED, USFS, BLM, 
   Mass, Hand.Wing.Index, dietdiv, 
   effect_urb, effect_temp, effect_tempint, effect_veg, effect_vegint, 
-  dynamic, effect_highertemp, effect_lessgreen,
+  sensitive, effect_highertemp, effect_lessgreen,
   mean_effect_urb ,median_effect_urb, f_urb, #over0_urb,
   low95_effect_urb, upp95_effect_urb,
   low90_effect_urb, upp90_effect_urb, 
@@ -673,6 +679,50 @@ ggsave("~/Github/caplter-dynamicbirds/figures/effect_urb.png",
 ```
 
 
+```{r SUP FIGURE urban effects by observation count}
+# Point and range plots
+plot.effects <- m.effects.sum %>% 
+  # filter(sensitive == "Y") %>%
+ggplot(aes(x = Nobs, y = median_effect_urb, color = sensitive)) +
+  theme_classic() +
+  geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
+  geom_linerange(aes(ymin = low95_effect_urb, ymax = upp95_effect_urb), 
+                 size = 0.2, alpha = 1, position = position_jitter(seed = 123, width = 0.1))+
+  geom_point(pch = 16, size = 1, position = position_jitter(seed = 123, width = 0.1)) + 
+  scale_color_manual(values = c("gray30", "red3"), labels = c("Uncertain", "Sensitive")) +
+  # gghighlight(sensitive == "Y") +
+  # scale_x_discrete(labels = m.effects.sum$spp) +
+  scale_x_continuous(trans = "log10") +
+  labs(x = "Number of Observations", y = "Relationship with\nUrbanization")+
+  # coord_flip() +
+  theme(
+    # legend.position = "none",
+    legend.position = "top",
+    # axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 14),
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.title = element_text(face = "bold", size = 14),
+    # legend.title = element_text(face = "bold", size = 16),
+    legend.title = element_blank(),
+    legend.text = element_text(face = "bold", size = 12)
+  ) 
+plot.effects
+
+ggsave("~/Github/caplter-dynamicbirds/figures/appendix/effect_urb_nobs.png",
+       plot.effects,
+       width = 6,
+       height = 4,
+       units = "in",
+       dpi = 300)
+```
+```{r}
+ggsave("~/Github/caplter-dynamicbirds/figures/effect_urb.png",
+       plot.effects,
+       width = 5,
+       height = 4,
+       units = "in",
+       dpi = 300)
+```
 
 
 
@@ -1692,18 +1742,16 @@ for(r in 1:nline){
       data.pred.VEG.comm %>% 
         # filter(level %in% c("mean", "low")) %>% 
         arrange(impervious, level)
-      # 0.022089846 -1SD veg, low urb
-      # 0.028208432 mean veg, low urb
-      # 0.035818850 +1SD veg, low urb
-      # 0.005910614 -1SD veg, high urb
-      # 0.005744220 mean veg, high urb
-      # 0.005588851 +1SD veg, high urb
-      
-      (0.022089846-0.028208432)/0.028208432*100 # 22% decrease with -1SD
-      (0.005910614-0.005744220)/0.005744220*100 # 3% increase with +1SD
-      
-      (0.035818850-0.028208432)/0.028208432*100 # 27% increase with +1SD
-      (0.005588851-0.005744220)/0.005744220*100 # 3% decrease with +1SD
+      # 0.021034742 -1SD veg, low urb
+      # 0.026460924 mean veg, low urb
+      # 0.033160512 +1SD veg, low urb
+      (0.021034742-0.026460924)/0.026460924*100 # 21% decrease with -1SD
+      (0.033160512-0.026460924)/0.026460924*100 # 25% increase with +1SD
+      # 0.006445848 -1SD veg, high urb
+      # 0.005994131 mean veg, high urb
+      # 0.005586113 +1SD veg, high urb
+      (0.006445848-0.005994131)/0.005994131*100 # 8% increase with -1SD
+      (0.005586113-0.005994131)/0.005994131*100 # 7% decrease with +1SD
 ```
 
 ### Temperature Effects: Species-level

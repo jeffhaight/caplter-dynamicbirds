@@ -143,6 +143,39 @@ load("~/GitHub/caplter-dynamicbirds/data/input/modelinputs_dynamicbirds2025.RDat
 
       data.spp %>% filter(code %in% spp.model)
 ```
+```{r SUP FIGURE plot priors}
+x <- seq(-10, 10,by=0.1)
+priors<- rbind(
+  data.frame(x = x, prob = dcauchy(x, location = 0, scale = 2.5), param = "cauchy"),
+  data.frame(x = x, prob = dgamma(x, shape = 1, scale = 1), param = "gamma"),
+  data.frame(x = x, prob = dnorm(x), param = "norm")
+)
+
+
+(plot.prior <- priors %>%
+  filter(param == "norm") %>%
+ggplot(aes(x = x, y = prob)) +
+  theme_bw() +
+  geom_line(linetype = "dotted") +
+  geom_line(data = (priors %>% filter(param == "cauchy")), color = "red") +
+  geom_line(data = (priors %>% filter(param == "gamma")), color = "blue") +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(x = "X", y = "Density") +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(face = "bold", size = 14),
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_text(size = 12)
+  ))
+
+  
+ggsave("~/Github/caplter-dynamicbirds/figures/appendix/priors.png",
+       plot.prior,
+       width = 4,
+       height = 2,
+       units = "in",
+       dpi = 300)  
+```
 
 ```{r setup and run model}
 # MCMC parameters
