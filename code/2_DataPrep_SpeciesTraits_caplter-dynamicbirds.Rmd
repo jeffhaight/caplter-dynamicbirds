@@ -7,19 +7,14 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+gc()
 ```
 
 
 ```{r load necessary packages}
-rm(list = ls())
-gc()
-
-library(tidyr)
-#library(ggplot2)
-#library(gghighlight)
-#library(viridis)
-#library(RColorBrewer)
-require(dplyr)
+library(tidyverse)
 ```
 
 

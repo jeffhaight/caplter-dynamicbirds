@@ -18,34 +18,11 @@ gc()
 ```
 
 ```{r packages, message = FALSE, echo = TRUE}
-library(beepr)
-library(vegan)
-
-library(sf)
-library(terra)
 library(tidyverse)
-library(tidyterra)  # tidyverse methods for SpatRaster and SpatVector objects (including ggplot functions)
-# library(tidycensus)
-#library(tmap)
-#library(stars)
 library(ggcorrplot)
 library(GGally)
 library(ggpubr)   # for adding correlations and p-values to ggplot
 library(scales)
-
-# Census data settings
-# options(tigris_use_cache = TRUE)
-#census_api_key("fd53ba9b6b6ab4fa5a0fcf329401ae7d3184dc6a", install = TRUE) # set the Census API key
-
-
-# for statistical modeling
-# library(lme4)
-# library(glmmTMB)
-# library(lmerTest)   # for getting p-values out of the lmer models
-# library(MuMIn)
-# library(performance)
-#library(regclass)
-# library(GLMMadaptive)   # for calculating VIF for 'glmmTMB' models
 ```
 
 # Import Data

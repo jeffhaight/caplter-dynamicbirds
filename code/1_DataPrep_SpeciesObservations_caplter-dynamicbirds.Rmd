@@ -20,6 +20,20 @@ library(sf)
 ```
 
 
+Code for cleaning and organizing raw bird observation datasets sourced from the CAP LTER database. 
+
+Very code was used to create datasets for a separate analysis of species richness and relative abundance of bird guilds (Haight et al. 2025) that was under development around the same time as this 2026 manuscript. Parts of of the processing steps in this R Markdown file (e.g., the 'truncating counts' part) were from that previous analysis can largely be ignored as irrelevant to this specific manuscript and its analysis. For context, please see: 
+Haight, J. D., De Albuquerque, F. S., Bateman, H. L., Frazier, A. E., & Larson, K. L. (2025). Urbanization and climate drive long‐term bird community trends across a desert city ecosystem. Ecological Applications, 35(4), e70063. https://doi.org/10.1002/eap.70063
+
+
+# Import data
+Source for bird observation data
+Lerman, S. B., Warren, P. S., Bateman, H., Katti, M., & Shochat, E. (2023). Point-count bird censusing: Long-term monitoring of bird abundance and diversity in central Arizona-Phoenix, ongoing since 2000 [Dataset]. Environmental Data Initiative. https://doi.org/10.6073/PASTA/4777D7F0A899F506D6D4F9B5D535BA09  
+
+This includes a few different data objects to import:
+1) Bird counts from each survey
+2) Metadata for each point count survey (times, observers, etc.)
+3) Bird monitoring locations
 ```{r read in the observation data}
 list.files("C:/Research/CAPLTER/data/core_birds")  
 
@@ -96,6 +110,8 @@ str(obs)
   
 
 ```
+
+
 
 ```{r read in the survey data}
 dt2 <-read.csv("C:/Research/CAPLTER/data/core_birds/46_bird_surveys.csv",
@@ -180,7 +196,8 @@ surveys <- dt2 ; rm(dt2)
 str(surveys)
 ```
 
-```{r read in the site location data for reference}
+
+```{r read in the site location data}
 
 pts.bird.data <- read.csv("C:/Research/CAPLTER/data/core_birds/46_bird_survey_locations.csv")
 
@@ -191,7 +208,8 @@ pts.bird <- st_as_sf(pts.bird.data, coords = c("long", "lat"), crs = 32612)
 plot(pts.bird$geometry)
 ```
 
-### Create Lists of Bird Species
+# Bird Species Lists
+From the bird observations, create lists of species that were observed.  
 ```{r create a list of observed species names} 
 # In the process, we will check that the names and codes in the 'obs' data are up-to-date
   # Create a list of the observed species
@@ -354,7 +372,7 @@ write.csv(bird.list.joined, "~/GitHub/caplter-dynamicbirds/data/input/listofspec
 
 
 ##### A) Exclude long-distance observations
-To reduce uncertainty due to observer bias and to ensure birds were actually using the site, we will exclude long-distance (>40 m) IDs and fly-throughs, consistent with methods from previous related studies (e.g. Warren et al. 2019). However, following the approaches of other CAP bird studies (D. Allen, F. Albuquerque, et al.), we can include far-way and fly-over species from certain groups of species: "Birds detected beyond the 40 m distance, or those that flew over the point, were not counted except for wide-ranging and wide-foraging species (i.e., birds of prey, waterfowl, and shorebirds)" (Allen et al. 2019); "Observers did not document species outside or above the 40-m radius except for soaring species." (Albuquerque et al. 2021).  
+To reduce uncertainty due to observer bias and to ensure birds were actually using the site, we can exclude long-distance (>40 m) IDs and fly-throughs, consistent with methods from previous related studies (e.g. Warren et al. 2019). However, following the approaches of other CAP bird studies (D. Allen, F. Albuquerque, et al.), we can include far-way and fly-over species from certain groups of species: "Birds detected beyond the 40 m distance, or those that flew over the point, were not counted except for wide-ranging and wide-foraging species (i.e., birds of prey, waterfowl, and shorebirds)" (Allen et al. 2019); "Observers did not document species outside or above the 40-m radius except for soaring species." (Albuquerque et al. 2021).  
 
 So, we will exclude observations that are 40+ m and fly-throughs (FT), with the exceptions of certain bird guilds, namely birds of prey, waterfowl, and 'large' waterbirds that would be expected to range over open water (guilds come from Andrade et al. 2018 and allaboutbirds.org).
 We need to define what counts as a "large" waterbird, which should include cormorants, pelicans, and great blue herons, but not any of the shorebirds. By wing length (source: AVONET), the Long-billed Curlew is the largest shorebird, at 266.8 mm (wingspan on allaboutbirds.org: 24.4-35.0 in, 62-89 cm). The Neotropic Cormorant has a wing length of 275.4 mm (40.2 in, 102 cm). The American Bittern is right in between, at 270.8 (wingspan 36.2 in, 92 cm), but it was also never observed from afar (only observation was < 40 m anway). 
@@ -570,7 +588,7 @@ obs %>% filter(!distance %in% c('40+', 'FT')) %>% nrow()
 bird.list.joined %>% filter(code %in% unique(obs$code))
 
 
-write.csv((bird.list.joined %>% filter(code %in% unique(obs$code))), "~/GitHub/caplter-dynamicbirds/data/input/listofspecies_corebirds_nearbyonly.csv", row.names = FALSE)
+# write.csv((bird.list.joined %>% filter(code %in% unique(obs$code))), "~/GitHub/caplter-dynamicbirds/data/input/listofspecies_corebirds_nearbyonly.csv", row.names = FALSE)
 ```
 
 
@@ -1365,19 +1383,23 @@ plot2
 
 
 
-# Export Observation Data
+# Optional: Export Observation Data
 ```{r export the cleaned bird count data by survey, warning = FALSE}
+# Count-level data were used in the process of filtering the spatiotemporal scope
+write.csv(obs.seas, "~/GitHub/caplter-dynamicbirds/data/input/core_birds_countmeanbyseason.csv", row.names = FALSE)
 saveRDS(y.count, "~/GitHub/caplter-dynamicbirds/data/input/core_birds_obs_countbysurvey.rds")
 saveRDS(K, "~/GitHub/caplter-dynamicbirds/data/input/core_birds_obs_surveycount.rds")
+
+
 # write.csv(K, "./core_birds_obs_surveycount.csv", row.names = FALSE)
 
 # str(apply(y.count, MARGIN = c(1,2,3), FUN = 'sum', na.rm = TRUE))
 ```
 
 # OPTIONAL: Export the count-level data
+These aren't used in the analyses.
 ```{r export the filtered seasonal count data, warning = FALSE}
 
-write.csv(obs.seas, "~/GitHub/caplter-dynamicbirds/data/input/core_birds_countmeanbyseason.csv", row.names = FALSE)
 # write.csv(obs.all, "~/GitHub/caplter-dynamicbirds/data/input/core_birds_obs_cleaned.csv", row.names = FALSE)
 
 ```

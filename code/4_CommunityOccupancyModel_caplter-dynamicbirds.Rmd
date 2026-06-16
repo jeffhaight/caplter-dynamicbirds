@@ -23,27 +23,27 @@ gc()
   library(beepr)  # for notifying you when some code is  done running
 
 # for statistical modeling
-  library(performance)  # for checking model performance (multicollinearity, VIF, overdispersion, etc.)
-  library(insight)      # for extracting a lot of useful model information, using functions like 'get_variance()'
-  library(lme4)
-  library(glmmTMB)
-  library(lmerTest)     # for getting p-values out of the lmer models
-  library(MuMIn)        # for calculating R^2, among other things
-  library(vegan)        # for multivariate community analyses
+  # library(performance)  # for checking model performance (multicollinearity, VIF, overdispersion, etc.)
+  # library(insight)      # for extracting a lot of useful model information, using functions like 'get_variance()'
+  # library(lme4)
+  # library(glmmTMB)
+  # library(lmerTest)     # for getting p-values out of the lmer models
+  # library(MuMIn)        # for calculating R^2, among other things
+  # library(vegan)        # for multivariate community analyses
   # library(rjags)
   library(jagsUI)       # for running Bayesian models in JAGS
-  library(mgcv)         # for GAM(M)s
-  library(itsadug)      # for GAMM plotting
+  # library(mgcv)         # for GAM(M)s
+  # library(itsadug)      # for GAMM plotting
 
 # for plotting
 # library(ggplot2)      # should already be in the 'tidyverse'
   library(ggpubr)       # for adding correlations and p-values to ggplot
-  library(ggeffects)    # for plotting glmm effects in ggplot
+  # library(ggeffects)    # for plotting glmm effects in ggplot
   library(ggcorrplot)   # for correlation plots
   library(GGally)       # similar to ggcorrplot
   library(gghighlight)  # for highlighting groups in ggplot
   library(RColorBrewer)
-  library(ggridges)
+  # library(ggridges)
 ```
 
 # Import Data

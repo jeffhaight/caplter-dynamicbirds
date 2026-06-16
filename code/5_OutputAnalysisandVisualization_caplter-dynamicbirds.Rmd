@@ -24,20 +24,20 @@ gc()
   library(abind)
 
 # for statistical modeling
-  library(performance)  # for checking model performance (multicollinearity, VIF, overdispersion, etc.)
-  library(insight)      # for extracting a lot of useful model information, using functions like 'get_variance()'
-  library(lme4)
-  library(glmmTMB)
-  library(lmerTest)     # for getting p-values out of the lmer models
-  library(MuMIn)        # for calculating R^2, among other things
+  # library(performance)  # for checking model performance (multicollinearity, VIF, overdispersion, etc.)
+  # library(insight)      # for extracting a lot of useful model information, using functions like 'get_variance()'
+  # library(lme4)
+  # library(glmmTMB)
+  # library(lmerTest)     # for getting p-values out of the lmer models
+  # library(MuMIn)        # for calculating R^2, among other things
   # library(rjags)
   library(jagsUI)       # for running Bayesian models in JAGS
-  library(mgcv)         # for GAM(M)s
+  # library(mgcv)         # for GAM(M)s
 
 # for plotting
 # library(ggplot2)      # should already be in the 'tidyverse'
   library(ggpubr)       # for adding correlations and p-values to ggplot
-  library(ggeffects)    # for plotting glmm effects in ggplot
+  # library(ggeffects)    # for plotting glmm effects in ggplot
   library(ggcorrplot)   # for correlation plots
   library(GGally)       # similar to ggcorrplot
   library(gghighlight)  # for highlighting groups in ggplot
@@ -1400,7 +1400,7 @@ urban.pred <- seq(min(env.model$ENDISIadj_std), max(env.model$ENDISIadj_std), le
     # the 10th and 90th percentile values seem like reasonable cutoffs
 ```
 ### Community-level urbanization effects, in real occupancy terms
-For instance, what is the predicte difference in occupancy between the least and most urbanized site?
+For instance, what is the predicted difference in occupancy between the least and most urbanized site?
 ```{r urbanization only predictions}
 # str(urban.pred)
 
@@ -2638,62 +2638,62 @@ ggsave("~/Github/caplter-dynamicbirds/figures/appendix/env_NDVI_birdsites_01to16
 # BONUS CODE
 
 ```{r urbanization effects by popularity}
-plot.effects <- m.effects.sum %>%
-ggplot(aes(x = as.factor(order_urbeffect), y = median_effect_urb, color = congruence)) +
-  theme_classic() +
-  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
-  geom_linerange(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb), 
-                 width = 0.4, size = 0.4, alpha = 1)+
-  geom_point(pch = 16, size = 1) +   #pch = 21, fill = NA
-  # geom_pointrange(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb)) +
-  scale_x_discrete(labels = m.effects.sum$spp) +
-  scale_color_viridis_c(option = "viridis", direction = 1) +
-  labs(x = "Species", y = "Relationship with\nImpervious Surface", color = "Regional \nPopularity") + 
-  # gghighlight(SGCN %in% c("1", "2", "3")) +
-  # gghighlight(spp %in% c("BETH")) +
-  # gghighlight(spp %in% c(m.effects.sum %>% filter(low90_effect_urb > 0) %>% pull(spp))) +
-  theme(
-    # legend.position = "none",
-    # axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 14),
-    axis.text.x = element_blank(),
-    axis.text.y = element_text(size = 14),
-    axis.title = element_text(face = "bold", size = 16),
-    legend.title = element_text(face = "bold", size = 16),
-    legend.text = element_text(size = 14)
-  )
-plot.effects
-
-ggsave("~/Github/caplter-dynamicbirds/figures/effect_urb_congruence.png",
-       plot.effects,
-       width = 7,
-       height = 4,
-       units = "in",
-       dpi = 300)
+# plot.effects <- m.effects.sum %>%
+# ggplot(aes(x = as.factor(order_urbeffect), y = median_effect_urb, color = congruence)) +
+#   theme_classic() +
+#   geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+#   geom_linerange(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb), 
+#                  width = 0.4, size = 0.4, alpha = 1)+
+#   geom_point(pch = 16, size = 1) +   #pch = 21, fill = NA
+#   # geom_pointrange(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb)) +
+#   scale_x_discrete(labels = m.effects.sum$spp) +
+#   scale_color_viridis_c(option = "viridis", direction = 1) +
+#   labs(x = "Species", y = "Relationship with\nImpervious Surface", color = "Regional \nPopularity") + 
+#   # gghighlight(SGCN %in% c("1", "2", "3")) +
+#   # gghighlight(spp %in% c("BETH")) +
+#   # gghighlight(spp %in% c(m.effects.sum %>% filter(low90_effect_urb > 0) %>% pull(spp))) +
+#   theme(
+#     # legend.position = "none",
+#     # axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 14),
+#     axis.text.x = element_blank(),
+#     axis.text.y = element_text(size = 14),
+#     axis.title = element_text(face = "bold", size = 16),
+#     legend.title = element_text(face = "bold", size = 16),
+#     legend.text = element_text(size = 14)
+#   )
+# plot.effects
+# 
+# ggsave("~/Github/caplter-dynamicbirds/figures/effect_urb_congruence.png",
+#        plot.effects,
+#        width = 7,
+#        height = 4,
+#        units = "in",
+#        dpi = 300)
 
 ```
 ```{r urbanization effects by cultural niche}
-plot.effects <- m.effects.sum %>%
-ggplot(aes(x = as.factor(order_urbeffect), y = median_effect_urb, color = as.factor(cultural_niche))) +
-  theme_classic() +
-  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
-  geom_linerange(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb), size = 0.4, alpha = 1)+
-  geom_point(pch = 16, size = 1) +   #pch = 21, fill = NA
-  # geom_pointrange(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb)) +
-  scale_x_discrete(labels = m.effects.sum$spp) +
-  # scale_color_viridis_c(option = "viridis", direction = 1) +
-  labs(x = "Species", y = "Relationship with\nImpervious Surface", 
-       color = "Cultural \nNiche") + 
-  gghighlight(cultural_niche %in% c("Celebrity", "Friend", "Neighbor", "Stranger")) +
-  theme(
-    # legend.position = "none",
-    # axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 14),
-    axis.text.x = element_blank(),
-    axis.text.y = element_text(size = 14),
-    axis.title = element_text(face = "bold", size = 16),
-    legend.title = element_text(face = "bold", size = 16),
-    legend.text = element_text(size = 14)
-  )
-plot.effects
+# plot.effects <- m.effects.sum %>%
+# ggplot(aes(x = as.factor(order_urbeffect), y = median_effect_urb, color = as.factor(cultural_niche))) +
+#   theme_classic() +
+#   geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+#   geom_linerange(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb), size = 0.4, alpha = 1)+
+#   geom_point(pch = 16, size = 1) +   #pch = 21, fill = NA
+#   # geom_pointrange(aes(ymin = low90_effect_urb, ymax = upp90_effect_urb)) +
+#   scale_x_discrete(labels = m.effects.sum$spp) +
+#   # scale_color_viridis_c(option = "viridis", direction = 1) +
+#   labs(x = "Species", y = "Relationship with\nImpervious Surface", 
+#        color = "Cultural \nNiche") + 
+#   gghighlight(cultural_niche %in% c("Celebrity", "Friend", "Neighbor", "Stranger")) +
+#   theme(
+#     # legend.position = "none",
+#     # axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 14),
+#     axis.text.x = element_blank(),
+#     axis.text.y = element_text(size = 14),
+#     axis.title = element_text(face = "bold", size = 16),
+#     legend.title = element_text(face = "bold", size = 16),
+#     legend.text = element_text(size = 14)
+#   )
+# plot.effects
 
 # ggsave("~/Github/caplter-dynamicbirds/figures/effect_urb_culturalniche.png",
 #        plot.effects,
@@ -2706,101 +2706,101 @@ plot.effects
 ```{r urb vs temp effects by cultural traits}
 
 
-
-data.spp %>% filter(common_name %in% spp.urb.negative) %>% select(c(common_name, cultural_niche)) %>%
-  arrange (cultural_niche)
-data.spp %>% filter(common_name %in% spp.urb.positive) %>% select(c(common_name, cultural_niche)) %>%
-  arrange (cultural_niche)
-
-m.effects.sum %>%
-ggplot(aes(x = median_effect_urb, y = median_effect_temp, color = as.factor(cultural_niche))) + #
-  theme_classic() +
-  # scale_x_discrete(labels = m.effects.sum$spp) +
-  geom_vline(xintercept = 0, color = "red", linetype = "dashed") +
-  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
-  geom_point() +
-  geom_errorbar(aes(xmin = low90_effect_urb, xmax = upp90_effect_urb), alpha = 0.2) +
-  geom_errorbar(aes(ymin = low90_effect_temp, ymax = upp90_effect_temp), alpha = 0.2) +
-  labs(x = "Relationship with Urbanization", y = "Relationship with Temperature \n(Daily Minimum)") + 
-  # gghighlight(SGCN %in% c("1", "2", "3")) +
-  # gghighlight(spp %in% c("BETH")) +
-  gghighlight(common_name %in% c(spp.urb.negative, spp.urb.positive#,
-                         # spp.temp.negative, spp.temp.positive,
-                         # spp.tempint.negative, spp.tempint.positive
-                         )) +
-  # gghighlight(spp %in% c(m.effects.sum %>% filter(upp90_effect_urb < 0) %>% pull(spp))) +
-  theme(
-    # axis.text.x = element_blank()
-  )
-
-
-m.effects.sum %>%
-ggplot(aes(x = median_effect_urb, y = median_effect_temp, fill = popularity, color = popularity)) + #
-  theme_classic() +
-  # scale_x_discrete(labels = m.effects.sum$spp) +
-  scale_color_distiller(palette = "YlGnBu", direction = 1)+
-  scale_fill_distiller(palette = "YlGnBu", direction = 1)+
-  geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
-  geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
-  geom_errorbar(aes(xmin = low90_effect_urb, xmax = upp90_effect_urb), alpha = 1) +
-  geom_errorbar(aes(ymin = low90_effect_temp, ymax = upp90_effect_temp), alpha = 1) +
-  labs(x = "Relationship with Urbanization", y = "Relationship with Temperature \n(Daily Minimum)") + 
-  geom_point(pch = 21) +
-  # gghighlight(SGCN %in% c("1", "2", "3")) +
-  # gghighlight(spp %in% c("BETH")) +
-  gghighlight(common_name %in% c(spp.urb.negative, spp.urb.positive#,
-                         # spp.temp.negative, spp.temp.positive,
-                         # spp.tempint.negative, spp.tempint.positive
-                         )) +
-  # gghighlight(spp %in% c(m.effects.sum %>% filter(upp90_effect_urb < 0) %>% pull(spp))) +
-  theme(
-    # axis.text.x = element_blank()
-  )
+# 
+# data.spp %>% filter(common_name %in% spp.urb.negative) %>% select(c(common_name, cultural_niche)) %>%
+#   arrange (cultural_niche)
+# data.spp %>% filter(common_name %in% spp.urb.positive) %>% select(c(common_name, cultural_niche)) %>%
+#   arrange (cultural_niche)
+# 
+# m.effects.sum %>%
+# ggplot(aes(x = median_effect_urb, y = median_effect_temp, color = as.factor(cultural_niche))) + #
+#   theme_classic() +
+#   # scale_x_discrete(labels = m.effects.sum$spp) +
+#   geom_vline(xintercept = 0, color = "red", linetype = "dashed") +
+#   geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+#   geom_point() +
+#   geom_errorbar(aes(xmin = low90_effect_urb, xmax = upp90_effect_urb), alpha = 0.2) +
+#   geom_errorbar(aes(ymin = low90_effect_temp, ymax = upp90_effect_temp), alpha = 0.2) +
+#   labs(x = "Relationship with Urbanization", y = "Relationship with Temperature \n(Daily Minimum)") + 
+#   # gghighlight(SGCN %in% c("1", "2", "3")) +
+#   # gghighlight(spp %in% c("BETH")) +
+#   gghighlight(common_name %in% c(spp.urb.negative, spp.urb.positive#,
+#                          # spp.temp.negative, spp.temp.positive,
+#                          # spp.tempint.negative, spp.tempint.positive
+#                          )) +
+#   # gghighlight(spp %in% c(m.effects.sum %>% filter(upp90_effect_urb < 0) %>% pull(spp))) +
+#   theme(
+#     # axis.text.x = element_blank()
+#   )
+# 
+# 
+# m.effects.sum %>%
+# ggplot(aes(x = median_effect_urb, y = median_effect_temp, fill = popularity, color = popularity)) + #
+#   theme_classic() +
+#   # scale_x_discrete(labels = m.effects.sum$spp) +
+#   scale_color_distiller(palette = "YlGnBu", direction = 1)+
+#   scale_fill_distiller(palette = "YlGnBu", direction = 1)+
+#   geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
+#   geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
+#   geom_errorbar(aes(xmin = low90_effect_urb, xmax = upp90_effect_urb), alpha = 1) +
+#   geom_errorbar(aes(ymin = low90_effect_temp, ymax = upp90_effect_temp), alpha = 1) +
+#   labs(x = "Relationship with Urbanization", y = "Relationship with Temperature \n(Daily Minimum)") + 
+#   geom_point(pch = 21) +
+#   # gghighlight(SGCN %in% c("1", "2", "3")) +
+#   # gghighlight(spp %in% c("BETH")) +
+#   gghighlight(common_name %in% c(spp.urb.negative, spp.urb.positive#,
+#                          # spp.temp.negative, spp.temp.positive,
+#                          # spp.tempint.negative, spp.tempint.positive
+#                          )) +
+#   # gghighlight(spp %in% c(m.effects.sum %>% filter(upp90_effect_urb < 0) %>% pull(spp))) +
+#   theme(
+#     # axis.text.x = element_blank()
+#   )
 
 ```
 ```{r OTHER TEMP and NDVI trends}
 
-
-(plot.trend <- env.model  %>% filter(!season == "annual") %>% #filter(season %in% c("1_winter", "2_spring")) %>%
-     ggplot(aes(x = survey_year, y = LST, group = season, color = season)) +
-     geom_point(alpha = 0.3, shape = 16, position = position_dodge(width = 0.6)) +
-     geom_smooth(method = "gam", se = FALSE) +
-     # scale_color_brewer(palette = "Dark2") +
-     #scale_color_manual(values = pal_season) +
-     # stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
-     labs(x = "Year", y = "Temperature (°C)") +
-     theme_bw()+
-     theme(
-         # legend.position = "none",
-         axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 16),
-         axis.text.y = element_text(size = 16),
-         axis.title = element_text(face = "bold", size = 16)
-     ))
-
-
-(plot.trend <- env.model %>% filter(!season == "annual") %>% 
-    filter(season %in% c("2_spring")) %>%
-    reframe(mean = mean(NDVI), median = median(NDVI),
-                                    sd = sd(NDVI), se = sd(NDVI)/sqrt(length(NDVI)), 
-                                    .by = c(survey_year, season)) %>%
-  ggplot(aes(x = survey_year, y = mean, group = season, color = season)) +
-  geom_errorbar(aes(ymin = (mean-1.96*se), ymax = (mean+1.96*se)), width = 0.4, size = 0.4, position = position_dodge(width = 0.5),
-                alpha = 0.5) +
-  geom_point(shape = 16, position = position_dodge(width = 0.5)) +
-  geom_line(linewidth = 0.5, position = position_dodge(width = 0.5)) +
-  scale_color_brewer(palette = "Dark2") +
-  # scale_color_manual(values = pal_season) +
-  scale_y_continuous(labels = label_number(accuracy = 0.01)) +
-  # stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
-  # coord_cartesian(ylim = c(0,30)) +
-  labs(x = "Year", y = "Vegetation (NDVI)") +
-  theme_bw()+
-    theme(
-    legend.position = "none",
-    axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 14),
-    axis.text.y = element_text(size = 14),
-    axis.title = element_text(face = "bold", size = 16)
-  ))
+# 
+# (plot.trend <- env.model  %>% filter(!season == "annual") %>% #filter(season %in% c("1_winter", "2_spring")) %>%
+#      ggplot(aes(x = survey_year, y = LST, group = season, color = season)) +
+#      geom_point(alpha = 0.3, shape = 16, position = position_dodge(width = 0.6)) +
+#      geom_smooth(method = "gam", se = FALSE) +
+#      # scale_color_brewer(palette = "Dark2") +
+#      #scale_color_manual(values = pal_season) +
+#      # stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
+#      labs(x = "Year", y = "Temperature (°C)") +
+#      theme_bw()+
+#      theme(
+#          # legend.position = "none",
+#          axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 16),
+#          axis.text.y = element_text(size = 16),
+#          axis.title = element_text(face = "bold", size = 16)
+#      ))
+# 
+# 
+# (plot.trend <- env.model %>% filter(!season == "annual") %>% 
+#     filter(season %in% c("2_spring")) %>%
+#     reframe(mean = mean(NDVI), median = median(NDVI),
+#                                     sd = sd(NDVI), se = sd(NDVI)/sqrt(length(NDVI)), 
+#                                     .by = c(survey_year, season)) %>%
+#   ggplot(aes(x = survey_year, y = mean, group = season, color = season)) +
+#   geom_errorbar(aes(ymin = (mean-1.96*se), ymax = (mean+1.96*se)), width = 0.4, size = 0.4, position = position_dodge(width = 0.5),
+#                 alpha = 0.5) +
+#   geom_point(shape = 16, position = position_dodge(width = 0.5)) +
+#   geom_line(linewidth = 0.5, position = position_dodge(width = 0.5)) +
+#   scale_color_brewer(palette = "Dark2") +
+#   # scale_color_manual(values = pal_season) +
+#   scale_y_continuous(labels = label_number(accuracy = 0.01)) +
+#   # stat_cor(method = "spearman", cor.coef.name = "rho", p.accuracy = 0.001, r.accuracy = 0.001, color = "black") +
+#   # coord_cartesian(ylim = c(0,30)) +
+#   labs(x = "Year", y = "Vegetation (NDVI)") +
+#   theme_bw()+
+#     theme(
+#     legend.position = "none",
+#     axis.text.x = element_text(angle = 30, vjust = 1, hjust=1, size = 14),
+#     axis.text.y = element_text(size = 14),
+#     axis.title = element_text(face = "bold", size = 16)
+#   ))
 ```
 
 
