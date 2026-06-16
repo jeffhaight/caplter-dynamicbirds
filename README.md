@@ -1,4 +1,5 @@
 # caplter-dynamicbirds
+[![DOI](https://zenodo.org/badge/932333123.svg)](https://doi.org/10.5281/zenodo.20709938)
 
 # A repository for:
 Haight, Jeffrey D.; Bateman, Heather L.; Frazier, Amy E.; Larson, Kelli L.; Susannah B. Lerman; Paige S. Warren; Albuquerque, Fabio S. Hot in the city: impacts of climate variability and urban landscape change on birds
