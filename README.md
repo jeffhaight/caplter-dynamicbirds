@@ -77,7 +77,7 @@ Dataset representing the number of days on which each site was surveyed by point
 
 
 **./data/input/indices_Landsat_corebirds_mean1000m_ISadjusted_pc1.csv**
-A dataset of impervious surface values derived from [land cover-adjusted rasters of the Enhanced Normalized Difference in Impervious Surface Index (ENDISI)][https://doi.org/10.6073/PASTA/147EFCA87F731ED8F16433B5F692AF30] around each bird sampling site, following the methods of related [Haight et al. 2024 environmental summaries for the bird monitoring locations][https://doi.org/10.6073/PASTA/9D44CD85F881586D6D06E7A7293E833C], with which it was merged.
+A dataset of impervious surface values derived from [land cover-adjusted rasters of the Enhanced Normalized Difference in Impervious Surface Index (ENDISI)](https://doi.org/10.6073/PASTA/147EFCA87F731ED8F16433B5F692AF30) around each bird sampling site, following the methods of related [Haight et al. 2024 environmental summaries for the bird monitoring locations](https://doi.org/10.6073/PASTA/9D44CD85F881586D6D06E7A7293E833C), with which it was merged.
 
 
 **./data/input/birdtraits_corebirds2025.csv** 
