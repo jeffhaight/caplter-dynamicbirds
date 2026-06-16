@@ -23,8 +23,8 @@ This folder contains all .R script and RMarkdown (.rmd) files used for conductin
 
 | File  | Description  |
 |---|---|
-|**./code/1_DataPrep_SpeciesObservations_caplter-dynamicbirds.rmd**   | Code for cleaning and organizing [CAP LTER bird monitoring data][https://doi.org/10.6073/pasta/1d1badb48df8a5c5fcfafb3275713bc1], in preparation for the fitting of occupancy models |
-|**./code/2_DataPrep_SpeciesTraits_caplter-dynamicbirds.rmd**   | Code for joining lists of Central Arizona bird species lists with species trait datasets: [EltonTraits 1.0 (Wilman et al. 2016)][https://doi.org/10.6084/m9.figshare.c.3306933], [AVONET (Tobias et al. 2022)][https://doi.org/10.1111/ele.13898], and State of Arizona's [State Wildlife Action Plan: 2012-2022][https://www.azgfd.com/wildlife-conservation/on-the-ground-conservation/state-wildlife-action-plan/] and its corresponding [Heritage Data Management System][https://www.azgfd.com/wildlife-conservation/on-the-ground-conservation/cooperative-programs/az-natural-heritage-program/] |
+|**./code/1_DataPrep_SpeciesObservations_caplter-dynamicbirds.rmd**   | Code for cleaning and organizing [CAP LTER bird monitoring data](https://doi.org/10.6073/pasta/1d1badb48df8a5c5fcfafb3275713bc1), in preparation for the fitting of occupancy models |
+|**./code/2_DataPrep_SpeciesTraits_caplter-dynamicbirds.rmd**   | Code for joining lists of Central Arizona bird species lists with species trait datasets: [EltonTraits 1.0 (Wilman et al. 2016)](https://doi.org/10.6084/m9.figshare.c.3306933), [AVONET (Tobias et al. 2022)](https://doi.org/10.1111/ele.13898), and State of Arizona's [State Wildlife Action Plan: 2012-2022](https://www.azgfd.com/wildlife-conservation/on-the-ground-conservation/state-wildlife-action-plan/) and its corresponding [Heritage Data Management System](https://www.azgfd.com/wildlife-conservation/on-the-ground-conservation/cooperative-programs/az-natural-heritage-program/) |
 |**./code/3_ModelDataFormatting_caplter-dynamicbirds.rmd**   | Code for filtering species and environmental data down to the spatiotemporal scope of the analysis and examining relationships between and long-term trends in environmental conditions|
 |**./code/4_CommunityOccupancyModel_caplter-dynamicbirds.R**   | Script for using JAGS to fit the global Bayesian autologistic community occupancy model containing scale-optimized covariates within R, using the R package `jagsUI`|
 |**./code/5_OutputAnalysisandVisualization_caplter-dynamicbirds.R**  | Script for summarizing species-environment relationships and creating figures illustrating those relationships, as well as among-species variation in relationships paritally associated with functional traits |
@@ -54,9 +54,10 @@ Code was run using the following R packages:
 
 ---
 <div align="center"> <h3>data</h3> </div>
-This contains two subfolders with all the data files used for conducting the analyses and producing the `figures`:  
+This contains two subfolders with all the data files used for conducting the analyses and producing the `figures`:   
 **`input`**  
-**`output`**   
+and  
+**`output`**    
 
  
 
